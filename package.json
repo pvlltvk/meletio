@@ -1,0 +1,26 @@
+{
+  "name": "meletio",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "compile": "tsc",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run compile && node dist/scripts/prepare.js",
+    "start": "node dist/server/index.js",
+    "test": "npm run compile && node --test tests/learning.test.js tests/audio-state.test.js dist/tests/*.test.js",
+    "check": "npm run typecheck && npm test && node --check web/app.js && node --check web/learning.js && node --check tests/browser-check.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/yauzl": "3.4.0",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "htmlparser2": "12.0.0",
+    "sharp": "0.35.5",
+    "yauzl": "3.4.0"
+  }
+}

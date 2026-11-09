@@ -1,0 +1,137 @@
+{
+  "uiLanguage": "en",
+  "decks": [
+    {
+      "id": "everyday-el",
+      "title": "Everyday Greek",
+      "termLang": "el",
+      "meaningLang": "en",
+      "termDir": "ltr",
+      "meaningDir": "ltr",
+      "words": [
+        {
+          "id": "1",
+          "term": "λάδι",
+          "meaning": "olive oil",
+          "imagePath": "assets/demo/olive-oil.svg",
+          "audioPath": null
+        },
+        {
+          "id": "2",
+          "term": "ψωμί",
+          "meaning": "bread",
+          "imagePath": "assets/demo/bread.svg",
+          "audioPath": null
+        },
+        {
+          "id": "3",
+          "term": "καφές",
+          "meaning": "coffee",
+          "imagePath": "assets/demo/coffee.svg",
+          "audioPath": null
+        },
+        {
+          "id": "4",
+          "term": "γάτα",
+          "meaning": "cat",
+          "imagePath": "assets/demo/cat.svg",
+          "audioPath": null
+        },
+        {
+          "id": "5",
+          "term": "βιβλίο",
+          "meaning": "book",
+          "imagePath": "assets/demo/book.svg",
+          "audioPath": null
+        },
+        {
+          "id": "6",
+          "term": "σπίτι",
+          "meaning": "house",
+          "imagePath": "assets/demo/house.svg",
+          "audioPath": null
+        },
+        {
+          "id": "7",
+          "term": "νερό",
+          "meaning": "water",
+          "imagePath": "assets/demo/water.svg",
+          "audioPath": null
+        },
+        {
+          "id": "8",
+          "term": "λεμόνι",
+          "meaning": "lemon",
+          "imagePath": "assets/demo/lemon.svg",
+          "audioPath": null
+        },
+        {
+          "id": "9",
+          "term": "ψάρι",
+          "meaning": "fish",
+          "imagePath": "assets/demo/fish.svg",
+          "audioPath": null
+        },
+        {
+          "id": "10",
+          "term": "λουλούδι",
+          "meaning": "flower",
+          "imagePath": "assets/demo/flower.svg",
+          "audioPath": null
+        }
+      ]
+    },
+    {
+      "id": "demo-ar",
+      "title": "Arabic demo",
+      "termLang": "ar",
+      "meaningLang": "en",
+      "termDir": "rtl",
+      "meaningDir": "ltr",
+      "words": [
+        {
+          "id": "1",
+          "term": "كتاب",
+          "meaning": "book",
+          "imagePath": "assets/demo/book.svg",
+          "audioPath": null
+        },
+        {
+          "id": "2",
+          "term": "قطة",
+          "meaning": "cat",
+          "imagePath": "assets/demo/cat.svg",
+          "audioPath": null
+        },
+        {
+          "id": "3",
+          "term": "ماء",
+          "meaning": "water",
+          "imagePath": "assets/demo/water.svg",
+          "audioPath": null
+        },
+        {
+          "id": "4",
+          "term": "بيت",
+          "meaning": "house",
+          "imagePath": "assets/demo/house.svg",
+          "audioPath": null
+        },
+        {
+          "id": "5",
+          "term": "قهوة",
+          "meaning": "coffee",
+          "imagePath": "assets/demo/coffee.svg",
+          "audioPath": null
+        },
+        {
+          "id": "6",
+          "term": "ليمون",
+          "meaning": "lemon",
+          "imagePath": "assets/demo/lemon.svg",
+          "audioPath": null
+        }
+      ]
+    }
+  ]
+}
