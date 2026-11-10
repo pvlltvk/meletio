@@ -29,7 +29,7 @@ async function fixture() {
   let application: ReturnType<typeof createApplication>;
   let base = '';
   async function open() {
-    application = createApplication({databasePath, content: demo, origin, now: () => now});
+    application = createApplication({databasePath, content: demo, origin, now: () => now, registration: 'open'});
     await new Promise<void>((resolve, reject) => {
       application.server.once('error', reject);
       application.server.listen(0, '127.0.0.1', resolve);

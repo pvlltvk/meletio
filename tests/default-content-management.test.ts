@@ -18,7 +18,7 @@ async function fixture() {
   let app: ReturnType<typeof createApplication>;
   let base = '';
   async function open() {
-    app = createApplication({databasePath, content, origin});
+    app = createApplication({databasePath, content, origin, registration: 'open'});
     await new Promise<void>((resolve, reject) => { app.server.once('error', reject); app.server.listen(0, '127.0.0.1', resolve); });
     const address = app.server.address(); assert(address && typeof address !== 'string');
     base = `http://127.0.0.1:${address.port}`;
@@ -48,6 +48,7 @@ test('default sets are editable per account and retain stable IDs and saved snap
     const other = await f.register('other@example.com');
     const ownerCatalog = (await f.request('/api/decks', undefined, owner)).body.decks;
     const otherCatalog = (await f.request('/api/decks', undefined, other)).body.decks;
+    assert.deepEqual(otherCatalog, ownerCatalog);
     const greekMeta = ownerCatalog.find((deck: any) => deck.id === 'everyday-el');
     const arabicMeta = ownerCatalog.find((deck: any) => deck.id === 'demo-ar');
     assert.equal(greekMeta.editable, true);

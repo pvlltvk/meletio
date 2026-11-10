@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=24"
+    "node": ">=26.13.0 <27"
   },
   "scripts": {
     "compile": "tsc",
@@ -11,12 +11,17 @@
     "build": "npm run compile && node dist/scripts/prepare.js",
     "start": "node dist/server/index.js",
     "test": "npm run compile && node --test tests/learning.test.js tests/audio-state.test.js dist/tests/*.test.js",
-    "check": "npm run typecheck && npm test && node --check web/app.js && node --check web/learning.js && node --check tests/browser-check.js"
+    "check": "npm run lint && npm run typecheck && npm test && node --check web/app.js && node --check web/learning.js && node --check tests/browser-check.js",
+    "lint": "eslint . --max-warnings 0"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.6.6",
     "@types/yauzl": "3.4.0",
-    "typescript": "^5.9.0"
+    "eslint": "10.14.0",
+    "globals": "17.14.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "8.72.2"
   },
   "dependencies": {
     "htmlparser2": "12.0.0",

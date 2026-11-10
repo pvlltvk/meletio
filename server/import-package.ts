@@ -270,6 +270,6 @@ export async function parsePackage(archivePath: string, stageDirectory: string):
   } catch (error) {
     await rm(directory, {recursive: true, force: true});
     const message = error instanceof Error ? error.message : 'Unknown error';
-    throw new Error(`Invalid Anki package/archive: ${message}`);
+    throw new Error(`Invalid Anki package/archive: ${message}`, {cause: error});
   } finally { zip?.close(); }
 }

@@ -1,7 +1,8 @@
 # Verification
 
-Requires Node.js24+ and npm. Node.js26.13.0 has been exercised; Node.js24 has not
-been verified. Use the lockfile without upgrading dependencies.
+Requires Node.js 26, at least 26.13.0 and below 27, and npm. `.node-version` selects
+the exact development/CI version. Older Node.js lines are not supported. Use the
+lockfile without upgrading dependencies.
 
 ## Commands
 
@@ -14,11 +15,32 @@ node tests/source-smoke.js
 
 The checks use synthetic fixtures, temporary on-disk SQLite databases and
 loopback listeners. They do not require personal decks, recordings or accounts.
-No formatter or linter is configured; strict TypeScript and JavaScript syntax
-checks are included. The source smoke copies source and original demo assets,
+ESLint correctness checks, strict TypeScript and JavaScript syntax checks are
+included in `make check`; `make lint` runs only lint. No formatter is configured.
+The source smoke copies source, lint/version configuration and original demo assets,
 installs locked dependencies, checks/builds, and verifies process restart without
 generated files or private data. It needs npm registry access unless packages
 are cached, plus local loopback access. Temporary fixtures clean themselves up.
+
+## CI and lint
+
+The workflow runs on pull requests, pushes to `main` and manual dispatch. One
+Ubuntu job installs the `.node-version` runtime with locked npm dependencies,
+then runs `make check build` and `node tests/restart-smoke.js`. It uses pinned
+official checkout/setup-node actions, read-only repository permissions, no
+persisted checkout credentials, a 15-minute timeout and cancellation of superseded
+runs. No secrets, deployment or publishing step is required. A fresh checkout
+already verifies the source-only boundary; the fuller source-smoke command is
+available locally without duplicating all tests in CI.
+
+The ESLint flat configuration covers server/scripts/tests TypeScript, Node test
+JavaScript, browser scripts and the shared learning module. Browser-runner globals
+describe the application variables used inside `page.evaluate`; unknown globals
+still fail. The shared learning module also rejects shadowed variables. Existing
+CommonJS interop, intentional empty catches and explicit `any` in TypeScript test
+fixtures are retained. Control-character regex checks are exempted only in the
+two import parsers that deliberately reject those characters. No style rules or
+formatter are added.
 
 ## Repeatable browser session
 
@@ -38,8 +60,9 @@ node dist/scripts/browser-session.js 4194
 
 Keep that process running. It creates a fresh temporary SQLite database and four
 synthetic Anki exports, including oversized pictures, child decks and a source
-update. It prints a JSON manifest containing the loopback URL and seven absolute
-runner paths under ignored `artifacts/browser-*/`. No test account or import is
+update. It starts open and closed registration servers on the selected port
+and the next port, sharing only the synthetic database. The JSON manifest
+contains both loopback URLs and eight absolute runner paths under ignored `artifacts/browser-*/`. No test account or import is
 created in `data/meletio.sqlite`.
 
 Invoke the external tools with structured arguments, using the paths printed by
@@ -60,7 +83,8 @@ The generated wrappers already bind the correct isolated URL and fixture paths;
 do not substitute the live Wi-Fi URL. Each result lists passed groups and any
 page errors. Run `browser-check`, `backend-browser-check`, `import-browser-check`,
 `media-import-browser-check`, `polish-browser-check`,
-`polish-recovery-browser-check` and `follow-up-browser-check`. The existing auth
+`polish-recovery-browser-check`, `follow-up-browser-check` and
+`account-browser-check`. The existing auth
 throttle also applies to tests: if repeated runs hit429, stop and start a fresh
 session instead of changing the app's limiter. Close the browser with
 `browser_close`, then press Ctrl-C in the session terminal. The process removes
@@ -69,14 +93,22 @@ or live vocabulary mutation in this procedure.
 
 ## Coverage and recorded results
 
-The current automated baseline passes117 Node tests and41 browser groups
-(portable8, account/training9, import7, media3, polish6, recovery2, follow-up6).
+The current automated baseline passes 129 Node tests and 49 browser groups
+(portable8, account/training9, import7, media3, polish6, recovery2, follow-up6,
+account management8).
 The source-only install/build and process-restart checks also pass.
 
 Coverage includes:
 
 - Salted password hashes, session expiry/revocation, origin/account guards and
   private content/media ownership.
+- Closed/configurable registration, strict startup validation, password changes,
+  session preservation/revocation, concurrent hash/session races and bounded
+  failure/admission limits. Password drafts clear on pagehide and cached restore;
+  lost responses do not retry or update a later account.
+- Meaningful lint negative probes for undefined/unused/shadowed values, consistent
+  Node26 policy, and a pinned least-privilege CI workflow. GitHub execution has
+  not been verified because no push or remote setup is authorized.
 - Authoritative first answers, conflict/replay handling, saved snapshots,
   per-account progress and restart persistence.
 - Untrusted archives/SQLite/media, bounded parser workers, image resizing,

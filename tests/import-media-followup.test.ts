@@ -30,7 +30,7 @@ async function temp(run: (directory: string) => Promise<void>) {
 
 async function fixture(directory: string) {
   const databasePath = join(directory, 'app.sqlite');
-  const application = createApplication({databasePath, content: demo, origin});
+  const application = createApplication({databasePath, content: demo, origin, registration: 'open'});
   await new Promise<void>((resolve, reject) => {
     application.server.once('error', reject);
     application.server.listen(0, '127.0.0.1', resolve);

@@ -23,7 +23,8 @@ no recordings. Human pronunciation remains optional; no speech is synthesized.
 ## Next product milestones
 
 1. Check Anki import/file picking and audio on real iPhones/Safari, plus VoiceOver.
-2. Add deliberate account recovery and lifecycle policies before hosted use.
+2. Define email recovery and account lifecycle policies before hosted use;
+   password changes, session revocation and closed registration are implemented.
 3. Define lessons and snapshot/receipt/media retention; basic content editing is implemented.
 4. Define offline downloads, synchronization and conflict semantics.
 5. Consider HTTPS/VPS deployment after production security and operational review.

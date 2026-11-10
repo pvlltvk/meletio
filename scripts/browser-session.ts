@@ -9,11 +9,13 @@ import {prepare} from './prepare';
 
 async function main() {
   const port = Number(process.argv[2] || '4194');
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Provide a port between 1 and 65535.');
+  if (!Number.isInteger(port) || port < 1 || port > 65534) throw new Error('Provide a port between 1 and 65534.');
   const root = resolve(__dirname, '../..');
   const directory = await mkdtemp(join(tmpdir(), 'meletio-browser-'));
   const origin = `http://127.0.0.1:${port}`;
+  const closedOrigin = `http://127.0.0.1:${port + 1}`;
   let application: ReturnType<typeof createApplication> | undefined;
+  let closedApplication: ReturnType<typeof createApplication> | undefined;
   let runnerDirectory: string | undefined;
   try {
     const packageDirectory = async (name: string) => {
@@ -43,33 +45,42 @@ async function main() {
       ['media-import-browser-check', {url: origin + '/', packagePath: smart.archivePath}],
       ['polish-browser-check', {url: origin + '/', packagePath: base.archivePath, updatePackagePath: update.archivePath}],
       ['polish-recovery-browser-check', {url: origin + '/', packagePath: child.archivePath}],
-      ['follow-up-browser-check', {url: origin + '/', packagePath: base.archivePath}]
+      ['follow-up-browser-check', {url: origin + '/', packagePath: base.archivePath}],
+      ['account-browser-check', {url: origin + '/', closedUrl: closedOrigin + '/'}]
     ];
     await mkdir(join(root, 'artifacts'), {recursive: true});
     runnerDirectory = await mkdtemp(join(root, 'artifacts/browser-'));
     const runners: Record<string, string> = {};
     for (const [name, options] of suites) {
       const source = await readFile(join(root, 'tests', name + '.js'), 'utf8');
+      const runner = source.trim().replace(/;$/, '');
       const filename = join(runnerDirectory, name + '.js');
-      await writeFile(filename, `async page => (${source.trim()})(page, ${JSON.stringify(options)})\n`, {mode: 0o600});
+      await writeFile(filename, `async page => (${runner})(page, ${JSON.stringify(options)})\n`, {mode: 0o600});
       runners[name] = filename;
     }
-    application = createApplication({databasePath: join(directory, 'app.sqlite'), content: prepare(root), origin});
+    application = createApplication({databasePath: join(directory, 'app.sqlite'), content: prepare(root), origin, registration: 'open'});
+    closedApplication = createApplication({databasePath: join(directory, 'app.sqlite'), content: prepare(root), origin: closedOrigin, registration: 'closed'});
     await new Promise<void>((done, reject) => {
       application!.server.once('error', reject);
       application!.server.listen(port, '127.0.0.1', done);
     });
-    const manifest = {url: origin + '/', directory, runners};
+    await new Promise<void>((done, reject) => {
+      closedApplication!.server.once('error', reject);
+      closedApplication!.server.listen(port + 1, '127.0.0.1', done);
+    });
+    const manifest = {url: origin + '/', closedUrl: closedOrigin + '/', directory, runners};
     await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest, null, 2), {mode: 0o600});
     console.log(JSON.stringify(manifest, null, 2));
     const stop = async () => {
       await application!.close();
+      await closedApplication!.close();
       await rm(directory, {recursive: true, force: true});
       await rm(runnerDirectory!, {recursive: true, force: true});
     };
     for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { void stop().catch(error => { console.error(error.message); process.exitCode = 1; }); });
   } catch (error) {
     if (application) await application.close();
+    if (closedApplication) await closedApplication.close();
     await rm(directory, {recursive: true, force: true});
     if (runnerDirectory) await rm(runnerDirectory, {recursive: true, force: true});
     throw error;

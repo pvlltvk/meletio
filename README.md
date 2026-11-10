@@ -8,17 +8,22 @@ Practice, feedback and results survive page reloads and server restarts.
 
 ## Run locally
 
-Requires Node.js 24+ and npm. Verified here with Node.js 26.13.0; Node.js 24 has
-not been exercised in this checkout. Python is not required.
+Requires Node.js 26, version 26.13.0 or newer within the 26.x release line, and
+npm. `.node-version` pins development and CI to 26.13.0. Older Node.js versions
+are not supported. Python is not required.
 
 ```sh
 npm ci
-make serve
+REGISTRATION=open make serve
 ```
 
 Open **http://127.0.0.1:4173/** and create an account with an email and a password
 of at least 12 characters. Email is an account identifier; no verification email
 is sent. Each account has its own progress. Log out to switch learners.
+
+Registration is closed by default. Enable it temporarily for initial account
+creation as above, then stop the app and restart with `make serve` to close it.
+Existing accounts can log in with registration closed.
 
 Use `make serve PORT=4180` for another port. Without Make:
 
@@ -109,6 +114,22 @@ retained set keep their questions and answers. Deleting an entire set hides it
 and prevents new practice; stored history/media remain. There is no permanent
 purge or archived-set history screen yet.
 
+## Account management
+
+In Settings, choose **Change password** and enter your current password, new
+password and confirmation. Passwords must contain at least 12 characters. Saving
+keeps this browser signed in and signs out other sessions for the account.
+
+Password inputs clear after submission or navigation. A wrong current password
+leaves your session intact. If a connection failure leaves the result uncertain,
+there is no automatic retry; sign in with the proposed new password to confirm
+whether the change saved.
+
+Login and password changes have bounded failure limits per account and socket
+address, separate request-rate limits and a two-hash concurrency cap. Successful
+logins do not consume the failed-login allowance. Forwarded client-IP headers
+are not trusted by this local server.
+
 ## Storage and configuration
 
 Default database: `data/meletio.sqlite`. Keep it to preserve accounts, progress,
@@ -136,6 +157,7 @@ Keep backups, logs, browser captures and any credentials outside this repository
 | `DATABASE_PATH` | `data/meletio.sqlite` | Database path, relative to working directory |
 | `APP_ORIGIN` | `http://HOST:PORT` | Exact browser origin allowed to make changes |
 | `SECURE_COOKIES` | `false` | Set `true` when serving through HTTPS |
+| `REGISTRATION` | `closed` | Allow new accounts only when explicitly set to `open` |
 
 Back up while the app is running with an explicit new file outside the project:
 
@@ -173,9 +195,9 @@ garbage collection. Keep the entire data directory private.
 
 Passwords use salted scrypt hashes; cookies carry opaque expiring sessions, whose
 token hashes are stored in SQLite. Logging out revokes that browser session.
-There is no password recovery, email delivery, social login or account management
-interface yet. Do not use a password you cannot recover from your own password
-manager. This release is intended for local development; production deployment
+There is no password recovery, email delivery, social login, email change or
+account deletion interface yet. Do not use a password you cannot recover from
+your own password manager. This release is intended for local development; production deployment
 and operational hardening have not been verified.
 
 ## Portable preview
@@ -197,11 +219,17 @@ make check build
 - `tests/`: learning, preparation, backend API and browser contracts.
 - `docs/`: architecture, verification, content boundaries and roadmap.
 
-`npm run typecheck` runs strict TypeScript checks. `npm test` compiles and runs
-Node tests with temporary databases. API tests need local loopback networking.
-No formatter or linter is configured; JavaScript syntax is checked by `make check`.
+`npm run lint` or `make lint` runs ESLint on TypeScript and JavaScript source,
+scripts and tests without reformatting the code. `npm run typecheck` runs strict
+TypeScript checks. `npm test` compiles and runs Node tests with temporary
+databases. API tests need local loopback networking. `make check` includes lint,
+types, tests and JavaScript syntax checks. No formatter is configured.
 Browser test functions need an available Playwright runner; see
 [verification](docs/verification.md) for invocation and recorded evidence.
+
+GitHub Actions runs the same checks, build and isolated process-restart smoke on
+pull requests, pushes to `main` and manual dispatch, using only the declared
+Node.js version. The workflow does not publish artifacts or deploy the app.
 
 ## License and integration
 

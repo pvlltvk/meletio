@@ -8,7 +8,7 @@ import {parsePackage} from '../server/import-package';
 import {IMPORT_LIMITS} from '../server/import-types';
 import {inspectPackageInChild} from '../server/import-worker';
 import {ApiError} from '../server/types';
-import {makePackage, png, wav, writeZip, type PackageOptions, type ZipEntry} from './helpers/anki-package';
+import {makePackage, png, wav, writeZip, type PackageOptions} from './helpers/anki-package';
 
 async function temporary(run: (directory: string, stage: string) => Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), 'meletio-package-'));

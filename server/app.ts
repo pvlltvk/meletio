@@ -2,6 +2,7 @@ import {createServer, type IncomingMessage, type ServerResponse} from 'node:http
 import {readFile} from 'node:fs/promises';
 import {dirname, join, resolve} from 'node:path';
 import {Auth, sessionCookie} from './auth';
+import {AuthLimitError} from './auth-limits';
 import {openDatabase} from './database';
 import {Training} from './training';
 import {ContentRepository} from './content';
@@ -16,6 +17,7 @@ export interface ApplicationOptions {
   secureCookies?: boolean;
   now?: () => number;
   stagingRoot?: string;
+  registration?: 'open' | 'closed';
 }
 
 function mediaResponse(request: IncomingMessage, response: ServerResponse, media: {bytes: Uint8Array; mime: string; size: number} | undefined) {
@@ -94,6 +96,8 @@ function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
 }
 
 export function createApplication(options: ApplicationOptions) {
+  const registration = options.registration ?? 'closed';
+  if (!['open', 'closed'].includes(registration)) throw new Error('REGISTRATION must be open or closed.');
   const origin = new URL(options.origin);
   if (!['http:', 'https:'].includes(origin.protocol) || origin.origin !== options.origin || origin.username || origin.password) throw new Error('APP_ORIGIN must be an HTTP(S) origin without a path.');
   const db = openDatabase(options.databasePath);
@@ -139,11 +143,15 @@ export function createApplication(options: ApplicationOptions) {
       if (!['GET', 'POST', 'HEAD'].includes(method)) throw new ApiError(405, 'method_not_allowed', 'Method not allowed.');
       if (method === 'POST' && request.headers.origin !== options.origin) throw new ApiError(403, 'invalid_origin', 'Request origin is not allowed.');
       const cookie = request.headers.cookie;
+      if (path === '/api/auth/config' && method === 'GET') {
+        json(response, 200, {registrationOpen: registration === 'open'});
+        return;
+      }
       if (method === 'POST' && (path === '/api/auth/register' || path === '/api/auth/login')) {
+        if (path.endsWith('/register') && registration !== 'open') throw new ApiError(403, 'registration_closed', 'New accounts are disabled.');
         const body = await readBody(request);
-        auth.throttle(request.socket.remoteAddress || 'unknown');
-        const user = await auth.credentials(body, path.endsWith('/register'));
-        response.setHeader('Set-Cookie', sessionCookie(auth.createSession(user, cookie), Boolean(options.secureCookies)));
+        const {user, token} = await auth.authenticate(body, path.endsWith('/register'), cookie, request.socket.remoteAddress || 'unknown');
+        response.setHeader('Set-Cookie', sessionCookie(token, Boolean(options.secureCookies)));
         json(response, path.endsWith('/register') ? 201 : 200, {user});
         return;
       }
@@ -163,6 +171,10 @@ export function createApplication(options: ApplicationOptions) {
         return;
       }
       const user = auth.user(cookie);
+      if (path === '/api/account/password' && method === 'POST') {
+        json(response, 200, await auth.changePassword(body, cookie, request.socket.remoteAddress || 'unknown'));
+        return;
+      }
       const compact = url.searchParams.get('format') === 'compact';
       const deckMatch = /^\/api\/decks\/([a-zA-Z0-9-]{1,128})$/.exec(path);
       const contentMatch = /^\/api\/decks\/([a-zA-Z0-9-]{1,128})(?:\/words\/([a-zA-Z0-9-]{1,128}))?\/(rename|edit|delete)$/.exec(path);
@@ -206,7 +218,7 @@ export function createApplication(options: ApplicationOptions) {
     })().catch(error => {
       if (response.headersSent) { response.end(); return; }
       if (error instanceof ApiError) {
-        if (error.status === 429) response.setHeader('Retry-After', '5');
+        if (error.status === 429) response.setHeader('Retry-After', String(error instanceof AuthLimitError ? error.retryAfter : 5));
         request.resume();
         json(response, error.status, {error: {code: error.code, message: error.message}});
       }

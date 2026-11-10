@@ -17,7 +17,7 @@ async function fixture() {
   const databasePath = join(directory, 'app.sqlite');
   let app: ReturnType<typeof createApplication>; let base = '';
   async function open() {
-    app = createApplication({databasePath, content, origin});
+    app = createApplication({databasePath, content, origin, registration: 'open'});
     await new Promise<void>((resolve, reject) => { app.server.once('error', reject); app.server.listen(0, '127.0.0.1', resolve); });
     const address = app.server.address(); assert(address && typeof address !== 'string');
     base = `http://127.0.0.1:${address.port}`;

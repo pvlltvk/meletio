@@ -10,10 +10,12 @@ async function main() {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be between 1 and 65535.');
   const secure = process.env.SECURE_COOKIES || 'false';
   if (!['true', 'false'].includes(secure)) throw new Error('SECURE_COOKIES must be true or false.');
+  const registration = process.env.REGISTRATION ?? 'closed';
+  if (registration !== 'open' && registration !== 'closed') throw new Error('REGISTRATION must be open or closed.');
   const defaultHost = host.includes(':') ? `[${host}]` : host;
   const origin = process.env.APP_ORIGIN || `http://${defaultHost}:${port}`;
   const content = prepare(resolve(__dirname, '../..'));
-  const application = createApplication({databasePath: resolve(process.env.DATABASE_PATH || 'data/meletio.sqlite'), content, origin, secureCookies: secure === 'true'});
+  const application = createApplication({databasePath: resolve(process.env.DATABASE_PATH || 'data/meletio.sqlite'), content, origin, secureCookies: secure === 'true', registration});
   application.server.on('error', error => {
     console.error('Server failed:', error.message);
     void application.close().finally(() => { process.exitCode = 1; });

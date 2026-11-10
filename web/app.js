@@ -38,6 +38,12 @@ let failedOperation = null;
 let loadError = '';
 let authError = '';
 let registering = false;
+let registrationOpen = false;
+let passwordFormOpen = false;
+let passwordPending = false;
+let passwordFeedback = '';
+let passwordFailed = false;
+let passwordRevision = 0;
 let accountEmail = '';
 let catalogLoaded = false;
 let catalogCursor = null;
@@ -113,6 +119,7 @@ function clearPractice() {
 
 function clearAccount() {
   generation++;
+  clearPasswordForm();
   stopAudio();
   clearSearchAnnouncement();
   user = null;
@@ -157,7 +164,7 @@ function clearAccount() {
 
 async function useAttempt(value, current = generation) {
   let nextQuestions = questions;
-  let nextAnswers = answers;
+  let nextAnswers;
   let nextDeck = attemptDeck;
   if (!value.snapshotId) {
     nextDeck = value.deck;
@@ -224,7 +231,87 @@ function accountView() {
     app.innerHTML = `<main class="account-shell"><h1>${loadError ? 'Could not load your practice.' : 'Loading your learning space…'}</h1>${loadError ? `<p role="alert">${escapeHtml(loadError)}</p><button class="primary" data-reload="true">Try again</button>` : '<p role="status">One moment.</p>'}</main>`;
     return;
   }
-  app.innerHTML = `<main class="account-shell"><div class="brand"><span class="brandmark" aria-hidden="true">M</span>Meletio</div><h1>${registering ? 'Create account' : 'Log in'}</h1><p>${registering ? 'Create your account to keep your practice saved.' : 'Log in to continue your practice.'}</p><form id="account-form"><label for="account-email">Email</label><input id="account-email" name="email" type="email" autocomplete="username" maxlength="254" required value="${escapeHtml(accountEmail)}"><label for="account-password">Password</label><input id="account-password" name="password" type="password" autocomplete="${registering ? 'new-password' : 'current-password'}" minlength="12" maxlength="256" required aria-describedby="password-help"><p id="password-help">Use at least 12 characters.</p><p id="account-error" class="account-error" role="alert">${escapeHtml(authError)}</p><button class="primary wide" type="submit">${registering ? 'Create account' : 'Log in'}</button></form><button class="text-button" data-account-mode="true">${registering ? 'Already have an account? Log in' : 'New here? Create an account'}</button></main>`;
+  app.innerHTML = `<main class="account-shell"><div class="brand"><span class="brandmark" aria-hidden="true">M</span>Meletio</div><h1>${registering ? 'Create account' : 'Log in'}</h1><p>${registering ? 'Create your account to keep your practice saved.' : 'Log in to continue your practice.'}</p><form id="account-form"><label for="account-email">Email</label><input id="account-email" name="email" type="email" autocomplete="username" maxlength="254" required value="${escapeHtml(accountEmail)}"><label for="account-password">Password</label><input id="account-password" name="password" type="password" autocomplete="${registering ? 'new-password' : 'current-password'}" minlength="12" maxlength="256" required aria-describedby="password-help"><p id="password-help">Use at least 12 characters.</p><p id="account-error" class="account-error" role="alert">${escapeHtml(authError)}</p><button class="primary wide" type="submit">${registering ? 'Create account' : 'Log in'}</button></form>${registrationOpen ? '<button class="text-button" data-account-mode="true">New here? Create an account</button>' : ''}</main>`;
+  updateRegistrationControl();
+}
+
+function updateRegistrationControl() {
+  const form = app.querySelector('#account-form');
+  if (!form) return;
+  let button = app.querySelector('[data-account-mode]');
+  if (!registrationOpen) { button?.remove(); return; }
+  if (!button) {
+    button = document.createElement('button');
+    button.className = 'text-button';
+    button.dataset.accountMode = 'true';
+    form.after(button);
+  }
+  button.textContent = registering ? 'Already have an account? Log in' : 'New here? Create an account';
+}
+
+async function loadRegistrationConfig() {
+  try { registrationOpen = (await request('/api/auth/config')).registrationOpen === true; }
+  catch { registrationOpen = false; }
+  updateRegistrationControl();
+}
+
+function clearPasswordForm() {
+  passwordRevision++;
+  app.querySelector('#password-form')?.reset();
+  passwordFormOpen = false;
+  passwordPending = false;
+  passwordFeedback = '';
+  passwordFailed = false;
+}
+
+function accountSettings() {
+  const feedback = `<p id="password-feedback" class="${passwordFailed ? 'account-error' : 'password-status'}" role="${passwordFailed ? 'alert' : 'status'}">${escapeHtml(passwordFeedback)}</p>`;
+  const form = passwordFormOpen ? `<form id="password-form" class="content-form"><label for="current-password">Current password</label><input id="current-password" name="currentPassword" type="password" autocomplete="current-password" minlength="12" maxlength="256" required><label for="new-password">New password</label><input id="new-password" name="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required aria-describedby="new-password-help"><p id="new-password-help">Use at least 12 characters.</p><label for="confirm-password">Confirm new password</label><input id="confirm-password" name="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required>${feedback}<div class="content-actions"><button class="primary" type="submit">${passwordPending ? 'Saving…' : 'Save password'}</button><button class="secondary" type="button" data-password-cancel="true">Cancel</button></div></form>` : `${feedback}<button class="secondary" data-change-password="true">Change password</button>`;
+  return `<section class="settings-card" aria-labelledby="account-settings-title"><h2 id="account-settings-title">Account</h2><p>${escapeHtml(user.email)}</p>${form}</section>`;
+}
+
+async function savePassword(form) {
+  if (passwordPending || !user) return;
+  const currentPassword = form.elements.currentPassword.value;
+  const newPassword = form.elements.newPassword.value;
+  const confirmation = form.elements.confirmPassword.value;
+  const current = generation;
+  const revision = ++passwordRevision;
+  form.reset();
+  passwordFeedback = '';
+  passwordFailed = false;
+  if (newPassword !== confirmation) {
+    passwordFeedback = 'The new passwords do not match.';
+    passwordFailed = true;
+    render();
+    app.querySelector('#new-password')?.focus();
+    return;
+  }
+  passwordPending = true;
+  render();
+  try {
+    const result = await request('/api/account/password', {currentPassword, newPassword});
+    if (current !== generation || revision !== passwordRevision) return;
+    if (result.changed !== true) throw new Error('Unconfirmed password change.');
+    passwordFormOpen = false;
+    passwordFeedback = 'Password changed. Other sessions signed out.';
+  } catch (error) {
+    if (current !== generation || revision !== passwordRevision) return;
+    if (error.status === 401) { clearAccount(); authError = 'Your session ended. Log in to continue.'; }
+    else {
+      passwordFailed = true;
+      passwordFeedback = !error.status || error.status >= 500
+        ? 'The password change could not be confirmed. Try signing in with your new password.'
+        : error.status === 409 ? 'Your account changed in another tab. Reload and try again.' : error.message;
+    }
+  } finally {
+    if (current === generation && revision === passwordRevision) {
+      passwordPending = false;
+      render();
+      if (passwordFormOpen) app.querySelector('#current-password')?.focus();
+      else app.querySelector('[data-change-password]')?.focus();
+    } else if (!user) render();
+  }
 }
 
 function updateControls() {
@@ -243,9 +330,11 @@ function updateControls() {
   app.querySelectorAll('button, input, select').forEach(control => {
     control.disabled = Boolean(busy || failedOperation || importBusy) && !(importBusy && control.id === 'import-file') && !control.hasAttribute('data-retry') && !control.hasAttribute('data-reload') && !(importBusy && (control.hasAttribute('data-import-cancel') || control.hasAttribute('data-import-recover')));
   });
+  if (passwordPending) app.querySelectorAll('#password-form button,#password-form input').forEach(control => { control.disabled = true; });
 }
 
 async function loadPractice(nextScreen = 'study') {
+  clearPasswordForm();
   stopAudio();
   clearSearchAnnouncement();
   const current = ++generation;
@@ -296,6 +385,7 @@ async function loadPractice(nextScreen = 'study') {
 }
 
 async function initializeAccount() {
+  clearPasswordForm();
   const current = ++generation;
   accountLoaded = false;
   loadError = '';
@@ -980,7 +1070,6 @@ function importSettings() {
     const destinations = new Map([...decks.filter(item => item.imported), ...(importStage.matchingDestinations || [])].map(item => [item.id, item]));
     const chooseDestination = importStage.matchingDestinations?.length > 1;
     const chooseSource = !draft.destinationDeckId && importSourceDecks().length > 1;
-    const chooseModel = !draft.destinationDeckId && importNoteTypes(draft.sourceDeckId).length > 1;
     const destination = `<label>Save to<select name="destinationDeckId">${chooseDestination ? option('__choose__', 'Choose a learning set', draft.destinationDeckId) : ''}${option('', 'New private learning set', draft.destinationDeckId || '')}${[...destinations.values()].map(item => option(item.id, `Update ${item.title}`, draft.destinationDeckId)).join('')}</select></label>`;
     const source = `<label>Source deck<select name="sourceDeckId" required>${option('', 'Choose a deck', draft.sourceDeckId)}${(chooseSource ? importSourceDecks() : importStage.decks.filter(item => !item.filtered)).map(item => option(item.id, item.name, draft.sourceDeckId)).join('')}</select></label>`;
     const noteType = `<label>Note type<select name="noteTypeId" required>${option('', 'Choose a note type', draft.noteTypeId)}${importNoteTypes().map(item => option(item.id, item.name, draft.noteTypeId)).join('')}</select></label>`;
@@ -1002,10 +1091,11 @@ function importSettings() {
 
 function settings() {
   const management = serverBacked && deck?.editable ? `<section class="settings-card"><h2>Manage ${escapeHtml(deck.title)}</h2>${renameDraft !== null ? `<form id="deck-rename-form" class="content-form"><label>Set name<input name="title" maxlength="120" required value="${escapeHtml(renameDraft)}"></label>${contentFeedback()}<div class="content-actions"><button class="primary" type="submit">Save name</button><button class="secondary" type="button" data-rename-cancel="true">Cancel</button></div></form>` : `<div class="content-actions"><button class="secondary" data-rename-set="true">Rename set</button>${deck.imported ? '<button class="text-button" data-restore-media="true">Restore missing media</button>' : ''}<button class="text-button danger" data-delete-set="true">Delete set</button></div>${contentFeedback()}`}${deleteConfirmation === 'set' ? `<section class="confirmation" role="alert"><p>Delete “${escapeHtml(deck.title)}” from your learning sets? Your practice history${deck.imported ? ' and Anki export are' : ' is'} kept.</p><div class="content-actions"><button class="primary danger-fill" data-confirm-delete-set="true">Delete set</button><button class="secondary" data-keep="true">Keep set</button></div></section>` : ''}</section>` : '';
-  app.innerHTML = chrome(`<section class="intro"><h1>Settings</h1></section><div class="settings-stack"><section class="settings-card"><h2 id="learning-set-label">Learning set</h2>${!decks.length ? '<p>No learning sets yet. Import an Anki file below.</p>' : ''}<div class="deck-options" role="radiogroup" aria-labelledby="learning-set-label">${decks.map(option => `<label class="deck-option ${option.id === deck?.id ? 'selected' : ''}"><input type="radio" name="learning-set" value="${escapeHtml(option.id)}" ${option.id === deck?.id ? 'checked' : ''}><span><strong>${escapeHtml(option.title)}</strong><small>${escapeHtml(langName(option.termLang))} → ${escapeHtml(langName(option.meaningLang))}${!option.imported ? ' · Default' : ''}</small></span></label>`).join('')}</div>${serverBacked && catalogCursor ? '<button class="text-button" data-catalog-more="true">Load more learning sets</button>' : ''}</section>${management}<section class="settings-card"><h2>Pronunciation</h2><label class="switch-row" for="auto-pronounce"><span><strong>Play after I answer</strong></span><input id="auto-pronounce" type="checkbox" role="switch" ${autoPronounce ? 'checked' : ''}></label>${storageAvailable ? '' : '<p class="storage-note">This choice lasts for this visit.</p>'}</section>${serverBacked ? importSettings() : ''}<p class="settings-footnote">${serverBacked ? `Signed in as ${escapeHtml(user.email)}.` : 'Practice resets when this preview reloads.'}</p></div>`, 'settings');
+  app.innerHTML = chrome(`<section class="intro"><h1>Settings</h1></section><div class="settings-stack"><section class="settings-card"><h2 id="learning-set-label">Learning set</h2>${!decks.length ? '<p>No learning sets yet. Import an Anki file below.</p>' : ''}<div class="deck-options" role="radiogroup" aria-labelledby="learning-set-label">${decks.map(option => `<label class="deck-option ${option.id === deck?.id ? 'selected' : ''}"><input type="radio" name="learning-set" value="${escapeHtml(option.id)}" ${option.id === deck?.id ? 'checked' : ''}><span><strong>${escapeHtml(option.title)}</strong><small>${escapeHtml(langName(option.termLang))} → ${escapeHtml(langName(option.meaningLang))}${!option.imported ? ' · Default' : ''}</small></span></label>`).join('')}</div>${serverBacked && catalogCursor ? '<button class="text-button" data-catalog-more="true">Load more learning sets</button>' : ''}</section>${management}${serverBacked ? accountSettings() : ''}<section class="settings-card"><h2>Pronunciation</h2><label class="switch-row" for="auto-pronounce"><span><strong>Play after I answer</strong></span><input id="auto-pronounce" type="checkbox" role="switch" ${autoPronounce ? 'checked' : ''}></label>${storageAvailable ? '' : '<p class="storage-note">This choice lasts for this visit.</p>'}</section>${serverBacked ? importSettings() : ''}${serverBacked ? '' : '<p class="settings-footnote">Practice resets when this preview reloads.</p>'}</div>`, 'settings');
 }
 
 function render() {
+  if (!user || screen !== 'settings') clearPasswordForm();
   if (serverBacked && (!accountLoaded || !user || !deckLoaded)) {
     accountView();
     updateControls();
@@ -1109,6 +1199,8 @@ app.addEventListener('click', event => {
       return;
     }
     if (failedOperation) return;
+    if (button.dataset.changePassword && user) { clearPasswordForm(); passwordFormOpen = true; render(); app.querySelector('#current-password')?.focus(); return; }
+    if (button.dataset.passwordCancel) { clearPasswordForm(); render(); app.querySelector('[data-change-password]')?.focus(); return; }
     if (button.dataset.editWord) { stopAudio(); editDraft = {term: selectedWord.term, meaning: selectedWord.meaning}; contentError = ''; render(); app.querySelector('[name=term]')?.focus(); return; }
     if (button.dataset.editCancel) { editDraft = null; contentError = ''; contentPending = null; selectedWord = terms().find(word => word.id === selectedWord?.id); if (!selectedWord) screen = 'vocabulary'; render(); focusHeading(); return; }
     if (button.dataset.renameSet) { renameDraft = deck.title; contentError = ''; render(); app.querySelector('#deck-rename-form input')?.focus(); return; }
@@ -1129,6 +1221,7 @@ app.addEventListener('click', event => {
       screen = 'vocabulary'; render(); focusHeading(); return;
     }
     if (button.dataset.accountMode) {
+      if (!registrationOpen && !registering) return;
       accountEmail = document.querySelector('#account-email')?.value || accountEmail;
       registering = !registering;
       authError = '';
@@ -1137,6 +1230,7 @@ app.addEventListener('click', event => {
       return;
     }
     if (button.dataset.logout) {
+      clearPasswordForm();
       stopAudio();
       runOperation({path: '/api/auth/logout', body: {}, accept: () => clearAccount()});
       return;
@@ -1254,6 +1348,7 @@ app.addEventListener('click', event => {
 });
 
 app.addEventListener('submit', async event => {
+  if (event.target.id === 'password-form') { event.preventDefault(); savePassword(event.target); return; }
   if (event.target.id === 'word-edit-form') { event.preventDefault(); mutateContent('word-edit', editDraft); return; }
   if (event.target.id === 'deck-rename-form') { event.preventDefault(); mutateContent('rename', {title: renameDraft}); return; }
   if (event.target.id === 'import-mapping') { event.preventDefault(); previewImport(); return; }
@@ -1294,9 +1389,18 @@ let noticeRevision = 0;
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) stopAudio();
 });
-window.addEventListener('pagehide', stopAudio);
+window.addEventListener('pagehide', () => {
+  stopAudio();
+  clearPasswordForm();
+  const loginPassword = app.querySelector('#account-password');
+  if (loginPassword) loginPassword.value = '';
+});
+window.addEventListener('pageshow', event => {
+  if (event.persisted) { clearPasswordForm(); render(); }
+});
 
 if (serverBacked) {
   document.querySelector('.prototype-label').textContent = 'Private vocabulary and practice';
+  loadRegistrationConfig();
   initializeAccount();
 } else render();

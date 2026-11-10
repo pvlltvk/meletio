@@ -17,10 +17,10 @@ async function main() {
   const origin = `http://127.0.0.1:${port}`;
   let child;
   let cookie;
-  async function start() {
+  async function start(registration = 'closed') {
     child = spawn(process.execPath, [resolve('dist/server/index.js')], {
       env: {...process.env, HOST: '127.0.0.1', PORT: String(port), APP_ORIGIN: origin,
-        DATABASE_PATH: join(directory, 'app.sqlite'), SECURE_COOKIES: 'false'},
+        DATABASE_PATH: join(directory, 'app.sqlite'), SECURE_COOKIES: 'false', REGISTRATION: registration},
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     await new Promise((resolve, reject) => {
@@ -50,7 +50,7 @@ async function main() {
     return result;
   }
   try {
-    await start();
+    await start('open');
     const index = await fetch(origin);
     assert.equal(index.status, 200);
     assert.match(await index.text(), /data-server="true"/);
@@ -58,9 +58,20 @@ async function main() {
     const {attempt} = await request('/api/training', {deckId: 'everyday-el', requestId: randomUUID()});
     const body = {position: 0, revision: attempt.revision, optionId: attempt.questions[0].word.id, requestId: randomUUID()};
     const {attempt: answered} = await request(`/api/training/${attempt.id}/answer`, body);
+    const previousCookie = cookie;
+    assert.deepEqual(await request('/api/account/password', {
+      currentPassword: 'a process restart password', newPassword: 'a replaced process password'
+    }), {changed: true});
+    assert.equal(cookie, previousCookie);
     await stop();
     await start();
+    assert.deepEqual(await request('/api/auth/config'), {registrationOpen: false});
     await request('/api/auth/me');
+    const oldLogin = await fetch(origin + '/api/auth/login', {method: 'POST',
+      headers: {Origin: origin, 'Content-Type': 'application/json'},
+      body: JSON.stringify({email: 'restart@example.com', password: 'a process restart password'})});
+    assert.equal(oldLogin.status, 401);
+    await request('/api/auth/login', {email: 'restart@example.com', password: 'a replaced process password'});
     const resumed = await request('/api/training?deckId=everyday-el');
     assert.deepEqual(resumed.attempt, answered);
     const replay = await request(`/api/training/${attempt.id}/answer`, body);
@@ -71,6 +82,7 @@ async function main() {
     assert.equal(advanced.attempt.position, 1);
     assert.equal(advanced.attempt.answers.length, 1);
     console.log('PASS: spawned server restart preserves SQLite session, question order, feedback and mutation receipts');
+    console.log('PASS: changed password and retained session survive restart with registration closed');
     const sourceDirectory = join(directory, 'source-package');
     await mkdir(sourceDirectory);
     const archive = await makePackage(sourceDirectory, {

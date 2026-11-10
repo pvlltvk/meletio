@@ -7,7 +7,7 @@ async function main() {
   const directory = await mkdtemp(join(tmpdir(), 'meletio-source-'));
   const root = resolve(__dirname, '..');
   try {
-    for (const name of ['server', 'scripts', 'web', 'tests', 'assets', 'docs', 'package.json', 'package-lock.json', 'tsconfig.json', 'Makefile', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', '.gitignore', '.env.example']) {
+    for (const name of ['server', 'scripts', 'web', 'tests', 'assets', 'docs', 'package.json', 'package-lock.json', 'tsconfig.json', 'eslint.config.mjs', '.node-version', 'Makefile', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', '.gitignore', '.env.example']) {
       await cp(join(root, name), join(directory, name), {recursive: true, filter: path => !['__pycache__', 'data.js', 'preview.html', 'provenance.json'].includes(basename(path))});
     }
     for (const [command, args] of [['npm', ['ci', '--no-audit', '--no-fund']], ['make', ['check', 'build']], [process.execPath, ['tests/restart-smoke.js']]]) {

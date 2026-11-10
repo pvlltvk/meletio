@@ -140,3 +140,26 @@ never combine a restored snapshot with old sidecars. A manual backup requires a
 stopped copy of the complete data directory, including any SQLite sidecars.
 This is a single-process laptop deployment; production scaling, synchronization,
 offline queues and retention policy remain separate work.
+
+
+## Password and registration controls
+
+Registration defaults closed; a strict REGISTRATION=open|closed setting enables
+initial account creation when needed. GET /api/auth/config exposes only a no-store
+boolean so the login screen can hide registration without blocking existing users.
+
+POST /api/account/password verifies the current password and derives a new salted
+scrypt hash outside SQLite transactions. A synchronous transaction rechecks the
+current session and credential hash, updates with compare-and-swap and revokes
+other sessions. The caller's cookie stays valid. Login also rechecks the verified
+hash atomically with new-session issuance, preventing a delayed old-password login
+from recreating access after a change. Password requests never use generic
+mutation receipts or stored password-body fingerprints. A lost response is shown
+as uncertain rather than automatically resubmitted. No new schema tables.
+
+Failure windows allow 5/account and 20/socket-address per 15 minutes. Independent
+admission windows allow 60/address and 120 overall credential requests per minute;
+two concurrent scrypt derivations remain the limit. Each per-key map holds at
+most 1000 entries with expiry and oldest-entry eviction. Successful verification
+clears that account's failures without erasing unrelated address failures.
+The server uses the socket address and does not trust forwarded headers.

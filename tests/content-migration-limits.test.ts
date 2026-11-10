@@ -70,7 +70,7 @@ test('edits and renames that exceed the effective deck budget roll back override
   const directory = await mkdtemp(join(tmpdir(), 'meletio-content-budget-'));
   const path = join(directory, 'app.sqlite');
   const origin = 'http://127.0.0.1:4173';
-  const app = createApplication({databasePath: path, content: demo, origin});
+  const app = createApplication({databasePath: path, content: demo, origin, registration: 'open'});
   try {
     await new Promise<void>((resolve, reject) => { app.server.once('error', reject); app.server.listen(0, '127.0.0.1', resolve); });
     const address = app.server.address();

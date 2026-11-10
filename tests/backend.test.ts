@@ -33,7 +33,7 @@ async function fixture(options: {secureCookies?: boolean} = {}) {
   let app: ReturnType<typeof createApplication>;
   let base = '';
   async function open(nextContent = structuredClone(content)) {
-    app = createApplication({databasePath, content: nextContent, origin,
+    app = createApplication({databasePath, content: nextContent, origin, registration: 'open',
       secureCookies: options.secureCookies ?? false, now: () => instant});
     await new Promise<void>((resolve, reject) => {
       app.server.once('error', reject);

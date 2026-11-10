@@ -50,7 +50,7 @@
       const meaning = normalizeSearch(word.meaning, word.meaningLang || 'en');
       const usedMeanings = new Set([meaning]);
       const distractors = [];
-      for (const option of shuffle(unique.filter(option => option.id !== word.id), random)) {
+      for (const option of shuffle(unique.filter(candidate => candidate.id !== word.id), random)) {
         const optionMeaning = normalizeSearch(option.meaning, option.meaningLang || 'en');
         if (usedMeanings.has(optionMeaning)) continue;
         usedMeanings.add(optionMeaning);
