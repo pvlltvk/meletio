@@ -147,6 +147,7 @@ async (page, options = {}) => {
     check(await page.locator('.import-report').count() === 0, 'Committed recovery still offers a stale confirmation');
     await page.reload();
     await ready();
+    check(await page.evaluate(id => deck.id === id, importedId), 'Reload did not restore the selected imported vocabulary');
     await settings();
     await page.locator('[data-import-view]').click();
     await page.waitForFunction(id => !busy && !importBusy && deckLoaded && deck.id === id && deck.words.some(word => word.term === 'replacement term'), importedId);

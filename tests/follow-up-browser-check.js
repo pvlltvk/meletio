@@ -86,6 +86,8 @@ async (page, options = {}) => {
     await page.waitForFunction(count => terms().length === count - 1, arabic.count);
     await page.reload();
     await ready();
+    check(await page.evaluate(count => deck.id === 'demo-ar' && terms().length === count - 1, arabic.count), 'Reload did not restore the selected Arabic set');
+    await select('everyday-el');
     check(await page.evaluate(() => deck.id === 'everyday-el' && deck.title === 'My Greek words' && terms()[0].meaning === 'Private default translation'), 'Default edits/rename did not survive reload');
     await select('demo-ar');
     check(await page.evaluate(id => !terms().some(word => word.id === id), arabic.word.id), 'Default word deletion did not survive reload');
@@ -130,6 +132,8 @@ async (page, options = {}) => {
     check(await page.locator('#import-file').isVisible() && await page.evaluate(() => decks.length) === 0, 'Deleting the final imported set broke Settings');
     await logout();
     await signIn(firstEmail);
+    check(await page.evaluate(() => deck.id === 'demo-ar'), 'Returning account did not restore its own selected set');
+    await select('everyday-el');
     check(await page.evaluate(() => decks.length === 2 && deck.title === 'My Greek words'), 'Other account set deletions leaked to first account');
     passed.push('default changes are private; empty Study/Vocabulary/Settings can import and delete the final set across reload');
 

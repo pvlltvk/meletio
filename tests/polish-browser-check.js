@@ -77,16 +77,21 @@ async (page, options = {}) => {
     const selectedDeckId = await page.evaluate(() => deck.id);
     check(selectedDeckId === importedDeckId && await page.evaluate(() => deck.imported),
       'Import finished on a fallback deck instead of loading the selected deck by ID');
+    await page.reload();
+    await page.waitForFunction(() => user && deckLoaded && !busy && !failedOperation);
+    check(await page.evaluate(id => deck.id === id && deck.imported, importedDeckId), 'Reload lost the imported set omitted from the first catalog page');
+    await settings();
     await page.unroute('**/api/decks');
     passed.push('selected imported deck loads by ID when omitted from the first catalog page');
     await page.locator('[data-import-view]').click();
-    await page.locator('.word-card').first().click();
-
-    let releaseMedia; let mediaHeld = false;
-    await page.route('**/api/media/**', async route => {
-      if (!mediaHeld) { mediaHeld = true; await new Promise(resolve => { releaseMedia = resolve; }); }
+    let releaseMedia;
+    const mediaGate = new Promise(resolve => { releaseMedia = resolve; });
+    const recording = await page.evaluate(() => deck.words[0].audio);
+    await page.route(`**${recording}`, async route => {
+      await mediaGate;
       await route.continue();
     });
+    await page.locator('.word-card').first().click();
     const audio = page.locator('[data-audio]').first();
     check(await audio.count() === 1, 'Synthetic imported word has no recording for the Listen state check');
     await audio.click();

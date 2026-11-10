@@ -338,6 +338,23 @@ function updateControls() {
   if (passwordPending) app.querySelectorAll('#password-form button,#password-form input').forEach(control => { control.disabled = true; });
 }
 
+function savedLearningSet() {
+  if (!user) return null;
+  try {
+    const id = localStorage.getItem(`meletio.learningSet.${user.id}`);
+    return /^[a-zA-Z0-9-]{1,128}$/.test(id || '') ? id : null;
+  } catch { return null; }
+}
+
+function rememberLearningSet(id) {
+  if (!user) return;
+  try {
+    const key = `meletio.learningSet.${user.id}`;
+    if (id) localStorage.setItem(key, id);
+    else localStorage.removeItem(key);
+  } catch {}
+}
+
 async function loadPractice(nextScreen = 'study') {
   clearPasswordForm();
   stopAudio();
@@ -353,8 +370,8 @@ async function loadPractice(nextScreen = 'study') {
   try {
     if (!catalogLoaded) await refreshCatalog(current);
     if (current !== generation) return;
-    let deckId = selectedDeckId || decks[0]?.id;
-    if (!deckId) { clearPractice(); deck = undefined; deckLoaded = true; return; }
+    let deckId = selectedDeckId || savedLearningSet() || decks[0]?.id;
+    if (!deckId) { clearPractice(); deck = undefined; rememberLearningSet(null); deckLoaded = true; return; }
     let content;
     try { content = await request(`/api/decks/${encodeURIComponent(deckId)}`); }
     catch (error) {
@@ -362,7 +379,7 @@ async function loadPractice(nextScreen = 'study') {
       await refreshCatalog(current);
       if (current !== generation) return;
       deckId = decks[0]?.id;
-      if (!deckId) { clearPractice(); deck = undefined; deckLoaded = true; return; }
+      if (!deckId) { clearPractice(); deck = undefined; rememberLearningSet(null); deckLoaded = true; return; }
       content = await request(`/api/decks/${encodeURIComponent(deckId)}`);
     }
     if (current !== generation) return;
@@ -376,6 +393,7 @@ async function loadPractice(nextScreen = 'study') {
     lastSession = result.latestResult;
     review = result.review;
     reviewLoadedAt = performance.now();
+    rememberLearningSet(deck.id);
     deckLoaded = true;
   } catch (error) {
     if (current !== generation) return;
@@ -401,6 +419,7 @@ async function initializeAccount() {
   try {
     const result = await request('/api/auth/me');
     if (current !== generation) return;
+    if (user?.id !== result.user.id) deck = undefined;
     user = result.user;
     accountLoaded = true;
     await loadPractice();
@@ -1404,6 +1423,7 @@ app.addEventListener('submit', async event => {
     const result = await request(`/api/auth/${registering ? 'register' : 'login'}`, {email: accountEmail, password});
     if (current !== generation) return;
     user = result.user;
+    deck = undefined;
     clearPractice();
     accountLoaded = true;
     catalogLoaded = false;

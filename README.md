@@ -66,6 +66,7 @@ for changed or removed words. Scheduling is independent from Anki.
 - Resume the same questions and answer choices, including answered feedback.
 - Saved results and retry of only missed words, using the full deck for choices.
 - Independent progress per account and learning set; Greek and Arabic demo sets.
+- The last selected learning set is remembered in this browser for each account.
 - Optional automatic pronunciation after answering, off by default.
 - Listen keeps its label steady, with delayed loading feedback and a subtle
   playback indicator. The current recording is prepared and reused for replay.
