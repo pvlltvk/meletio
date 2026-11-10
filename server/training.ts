@@ -3,6 +3,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {resolve} from 'node:path';
 import {transaction} from './database';
 import {ContentRepository, deckMetadata} from './content';
+import {Reviews} from './reviews';
 import {ApiError, fields, invalid, stringField, type Attempt, type CompactAttempt, type Content, type Deck, type Question, type TrainingAnswer, type TrainingSnapshot, type Word} from './types';
 
 const {buildQuestions} = require(resolve(__dirname, '../../web/learning.js')) as {buildQuestions: (words: Word[]) => Question[]};
@@ -25,6 +26,7 @@ function project(state: State): CompactAttempt {
   }
   const last = state.answers[state.answers.length - 1];
   return {id: state.id, deckId: state.deckId, status: state.status, revision: state.revision,
+    ...(state.mode === 'lesson' ? {mode: state.mode} : {}),
     snapshotId: state.id, position: state.position, selected: state.selected,
     answerCount: state.answers.length, correct: state.answers.filter(answer => answer.correct).length,
     total: state.questions.length, lastAnswer: last ? {position: state.answers.length - 1, wordId: last.word.id, optionId: last.optionId, correct: last.correct} : null,
@@ -43,9 +45,11 @@ function checkBudget(value: unknown, limit: number, code: string, message: strin
 
 export class Training {
   private content: ContentRepository;
+  private reviews: Reviews;
 
   constructor(private db: DatabaseSync, content: ContentRepository | Content, private now: () => number) {
     this.content = content instanceof ContentRepository ? content : new ContentRepository(db, content);
+    this.reviews = new Reviews(db);
   }
 
   private stored(userId: string, id: string): State {
@@ -97,6 +101,7 @@ export class Training {
       return value;
     };
     return {id: state.id, deckId: state.deckId, status: state.status, revision: state.revision,
+      ...(state.mode === 'lesson' ? {mode: state.mode} : {}),
       deck: {...snapshot.deck, words: snapshot.words},
       questions: snapshot.questions.map(question => ({word: word(question.wordId), options: question.optionIds.map(word)})),
       answers: this.answerRows(userId, state).map(answer => ({word: word(answer.wordId), optionId: answer.optionId, correct: answer.correct})),
@@ -120,7 +125,8 @@ export class Training {
 
   private summary(state: State) {
     const attempt = project(state);
-    return {id: attempt.id, deckId: attempt.deckId, correct: attempt.correct, total: attempt.answerCount, completedAt: attempt.completedAt};
+    return {id: attempt.id, deckId: attempt.deckId, correct: attempt.correct, total: attempt.answerCount, completedAt: attempt.completedAt,
+      ...(attempt.mode === 'lesson' ? {mode: attempt.mode} : {})};
   }
 
   results(userId: string, deckId: string) {
@@ -130,9 +136,14 @@ export class Training {
   }
 
   current(userId: string, deckId: string, compact = false) {
-    this.content.metadata(userId, deckId);
+    const deck = this.content.deck(userId, deckId);
+    let questions: Question[] = [];
+    try { questions = buildQuestions(this.words(deck)); }
+    catch {}
+    const eligible = new Set(questions.map(question => question.word.id));
+    const review = this.reviews.summary(userId, deck, deck.words.filter(word => eligible.has(word.id)), this.now());
     const row = this.db.prepare("SELECT state FROM training_attempts WHERE user_id = ? AND deck_id = ? AND status = 'active'").get(userId, deckId) as StoredAttempt | undefined;
-    const result = {attempt: row ? this.render(userId, JSON.parse(row.state) as State, compact) : null, latestResult: this.results(userId, deckId)[0] || null};
+    const result = {attempt: row ? this.render(userId, JSON.parse(row.state) as State, compact) : null, latestResult: this.results(userId, deckId)[0] || null, review};
     if (!compact) checkBudget(result, legacyLimit, 'compact_required', 'This practice is too large for the legacy format. Request format=compact.');
     return result;
   }
@@ -141,11 +152,21 @@ export class Training {
     this.db.prepare('UPDATE training_attempts SET state = ?, status = ?, completed_at = ? WHERE id = ? AND user_id = ?').run(JSON.stringify(state), state.status, state.completedAt, state.id, userId);
   }
 
-  private create(userId: string, deck: Deck, missed?: Set<string>): StoredCompact {
-    const words = deck.words.map(word => ({...word, termLang: word.termLang || deck.termLang, meaningLang: word.meaningLang || deck.meaningLang}));
+  private words(deck: Deck) {
+    return deck.words.map(word => ({...word, termLang: word.termLang || deck.termLang, meaningLang: word.meaningLang || deck.meaningLang}));
+  }
+
+  private create(userId: string, deck: Deck, missed?: Set<string>, lesson = false): StoredCompact {
+    const words = this.words(deck);
     let questions: Question[];
     try { questions = buildQuestions(words); }
     catch { invalid('This deck needs four distinct terms with different meanings.'); }
+    if (lesson) {
+      const eligible = new Set(questions.map(question => question.word.id));
+      const selected = this.reviews.select(userId, deck, words.filter(word => eligible.has(word.id)), this.now());
+      questions = questions.filter(question => selected.has(question.word.id));
+      if (!questions.length) throw new ApiError(409, 'lesson_unavailable', 'No words are due for a lesson. Reload Study to check your review dates.');
+    }
     if (missed) questions = questions.filter(question => missed.has(question.word.id));
     if (!questions.length) invalid('There are no missed words to practice.');
     const snapshot = snapshotFrom(deck, questions);
@@ -158,6 +179,7 @@ export class Training {
     }
     const id = randomUUID();
     const state: StoredCompact = {storageVersion: 2, id, deckId: deck.id, status: 'active', revision: 0, snapshotId: id,
+      ...(lesson ? {mode: 'lesson' as const} : {}),
       position: 0, selected: null, answerCount: 0, correct: 0, total: questions.length, lastAnswer: null, createdAt: this.now(), completedAt: null};
     this.db.prepare('INSERT INTO training_attempts VALUES (?, ?, ?, ?, ?, ?, NULL)').run(id, userId, deck.id, state.status, JSON.stringify(state), state.createdAt);
     this.db.prepare('INSERT INTO training_snapshots (id, owner_id, content) VALUES (?, ?, ?)').run(id, userId, JSON.stringify(snapshot));
@@ -175,11 +197,28 @@ export class Training {
     return JSON.parse(row.question) as {wordId: string; optionIds: string[]};
   }
 
+  private reviewAnswer(userId: string, state: State, wordId: string, correct: boolean) {
+    if (state.mode !== 'lesson') return;
+    let current: Deck;
+    try { current = this.content.deck(userId, state.deckId); }
+    catch (error) {
+      if (error instanceof ApiError && error.status === 404) return;
+      throw error;
+    }
+    const word = current.words.find(word => word.id === wordId);
+    if (!word) return;
+    const snapshot = this.snapshot(userId, state.id);
+    const saved = snapshot.words.find(word => word.id === wordId);
+    if (!saved) throw new Error('Practice snapshot has an unknown word.');
+    this.reviews.answer(userId, current, word, snapshot.deck, saved, correct, this.now());
+  }
+
   mutate(userId: string, action: string, id: string | undefined, body: Record<string, unknown>, compact = false) {
     if (id) this.stored(userId, id);
     if (!['start', 'answer', 'advance', 'retry'].includes(action)) invalid('Invalid practice action.');
-    const allowed = action === 'start' ? ['deckId', 'requestId'] : action === 'answer' ? ['position', 'optionId', 'revision', 'requestId'] : action === 'advance' ? ['position', 'revision', 'requestId'] : ['requestId'];
+    const allowed = action === 'start' ? ['deckId', 'mode', 'requestId'] : action === 'answer' ? ['position', 'optionId', 'revision', 'requestId'] : action === 'advance' ? ['position', 'revision', 'requestId'] : ['requestId'];
     fields(body, allowed);
+    if (action === 'start' && body.mode !== undefined && body.mode !== 'lesson' && body.mode !== 'practice') invalid('Invalid practice mode.');
     if (action === 'answer' || action === 'advance') {
       if (!Number.isSafeInteger(body.position) || (body.position as number) < 0 || !Number.isSafeInteger(body.revision) || (body.revision as number) < 0) invalid('Invalid practice position or revision.');
     }
@@ -196,7 +235,7 @@ export class Training {
       }
       let state: State;
       if (action === 'start') {
-        state = this.create(userId, this.content.deck(userId, stringField(body.deckId, 'learning set')));
+        state = this.create(userId, this.content.deck(userId, stringField(body.deckId, 'learning set')), undefined, body.mode === 'lesson');
       } else {
         state = this.stored(userId, id!);
         if (action === 'retry') {
@@ -214,6 +253,7 @@ export class Training {
             const question = this.question(userId, state);
             if (!question.optionIds.includes(optionId)) invalid('Choose one of the offered answers.');
             const correct = optionId === question.wordId;
+            this.reviewAnswer(userId, state, question.wordId, correct);
             state.selected = optionId;
             if (normalized(state)) {
               this.db.prepare('INSERT INTO training_answers (attempt_id, position, word_id, option_id, correct) VALUES (?, ?, ?, ?, ?)').run(state.id, state.position, question.wordId, optionId, Number(correct));

@@ -31,6 +31,7 @@ export interface Question {
 export interface Attempt {
   id: string;
   deckId: string;
+  mode?: 'lesson';
   status: 'active' | 'completed' | 'superseded';
   revision: number;
   deck: Deck;
@@ -95,6 +96,7 @@ export interface TrainingSnapshot {
 export interface CompactAttempt {
   id: string;
   deckId: string;
+  mode?: 'lesson';
   status: Attempt['status'];
   revision: number;
   snapshotId: string;

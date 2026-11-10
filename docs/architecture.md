@@ -4,8 +4,8 @@ A TypeScript/CommonJS server serves an explicit public file allowlist and a vani
 JavaScript UI. Node built-ins provide HTTP, crypto, SQLite and child processes.
 The locked runtime dependencies are yauzl (lazy ZIP reading), htmlparser2
 (non-executing HTML/entity parsing) and Sharp (bounded picture optimization).
-Node24+ is intended; verification here uses
-Node26.13.0, including the emitted CommonJS loading htmlparser2's ESM.
+Node26 is supported, pinned to26.13.0, including the emitted CommonJS loading
+htmlparser2's ESM.
 
 The portable preview embeds demo-only DATA and keeps visit-only progress. The live
 app loads owner-scoped catalog metadata after authentication, at most50 entries
@@ -110,7 +110,7 @@ and navigation cancel it, and status announcements do not shift visible layout.
 
 ## Durable training and migration
 
-Schema2,3 and4 use additive transactions. Existing users/sessions/attempts
+Schema2,3,4 and5 use additive transactions. Existing users/sessions/attempts
 and receipts remain byte-identical; unknown newer versions are rejected. SQLite
 uses foreign keys, WAL and a busy timeout; SQL values are parameterized.
 
@@ -126,6 +126,26 @@ Revision/position checks reject stale writes; same request IDs replay the origin
 projection. Missed retries use original snapshot content and full-deck distractors.
 Current vocabulary can update independently from active/completed practice.
 Media BLOBs, snapshots and receipts are retained without automatic compaction.
+
+Schema5 adds word_reviews keyed by owner/set/word, with a learning-content
+fingerprint, interval step, due date and answer timestamp. New lesson attempts
+carry mode:lesson; omitted mode preserves ordinary practice and old receipts.
+Lesson selection filters full-deck questions to at most10 due-first/new targets;
+the existing full-deck snapshot budget and distractor rules still apply.
+GET /api/training adds an owner-scoped review summary with due/new counts,
+the earliest future due date, lesson size and server asOf timestamp. The browser
+uses that timestamp to refresh Study when a review becomes due; selection and
+review-date calculations remain on the server.
+
+First lesson answers update review state inside the answer/receipt transaction.
+Replays, Continue, ordinary practice and immediate missed-word retries do not
+advance dates. Correct reviews use1/3/7/14/30elapsed days, capped at30; wrong
+answers reset the ladder and become due in10minutes. Historical attempts do not
+backfill schedules. Term/meaning/effective-language fingerprints make changed
+words new without rewriting history; metadata/media-only changes retain dates.
+Current-content checks prevent historical snapshot answers from replacing a
+changed or deleted word's schedule. Account/set keys keep reused IDs independent.
+
 `make backup BACKUP_PATH=/absolute/external/file.sqlite` opens the source read-only
 and uses `VACUUM INTO` to include committed WAL data in a consistent snapshot.
 It clears ephemeral import-stage rows only in the snapshot, retains committed

@@ -36,6 +36,29 @@ The server binds to laptop loopback by default. Open the exact origin printed by
 the server; using `localhost` instead of `127.0.0.1` needs a matching `APP_ORIGIN`.
 Phone access and VPS deployment need separate network/HTTPS configuration.
 
+## Lessons and review
+
+Study offers **Start lesson**: up to 10 words, with due reviews first and new
+words filling the remaining places. Each learner and learning set has independent
+review dates. Resume keeps the same questions, choices and saved feedback.
+
+A correct lesson answer schedules the next review after 1 day, then 3, 7, 14 and
+30 days for consecutive correct reviews, capped at 30 days. A wrong answer resets
+that progression and makes the word due in 10 minutes. Each first answer saves
+its review date immediately, including when you leave a lesson unfinished.
+Intervals are elapsed time from the server's saved answer, rather than midnight.
+
+Study shows due/new counts and the next review time when you are up to date.
+**Practice all words** and missed-word retries remain available without changing
+review dates. Lessons still use choices from the full learning set; even a
+one-word lesson needs enough distinct words and meanings for four choices.
+
+Scheduling starts fresh when this feature is installed; existing practice history
+is kept. Editing a term, meaning or language makes that word new for scheduling.
+Renaming a set or changing pictures/recordings keeps its dates. A lesson already
+in progress keeps its original content, but old answers cannot overwrite dates
+for changed or removed words. Scheduling is independent from Anki.
+
 ## Practice
 
 - Study, searchable vocabulary, word details and settings.

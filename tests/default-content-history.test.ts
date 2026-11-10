@@ -71,7 +71,7 @@ test('schema three migration preserves existing rows and failure rolls back only
       before.prepare('INSERT INTO imported_decks VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run('owned', 'owner', 'Imported', 'el', 'en', 'ltr', 'ltr', 2, '{}', 'hash', 100, 100);
       before.prepare('INSERT INTO deck_overrides VALUES (?,?,?)').run('owned', 'Local title', null);
       before.prepare('INSERT INTO content_mutations VALUES (?,?,?,?,?)').run('owner', 'receipt', 'fingerprint', '{"revision":2}', 100);
-      before.exec('DROP TABLE default_word_overrides; DROP TABLE default_deck_overrides; PRAGMA user_version=3;');
+      before.exec('DROP TABLE word_reviews; DROP TABLE default_word_overrides; DROP TABLE default_deck_overrides; PRAGMA user_version=3;');
       const names = before.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => String(row.name));
       const rows = names.map(name => before.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all());
       if (conflict) before.exec("CREATE TABLE default_word_overrides(marker TEXT); INSERT INTO default_word_overrides VALUES ('preserved');");
@@ -79,7 +79,7 @@ test('schema three migration preserves existing rows and failure rolls back only
       if (conflict) assert.throws(() => openDatabase(path));
       const after = conflict ? new DatabaseSync(path) : openDatabase(path);
       try {
-        assert.equal(after.prepare('PRAGMA user_version').get()!.user_version, conflict ? 3 : 4);
+        assert.equal(after.prepare('PRAGMA user_version').get()!.user_version, conflict ? 3 : 5);
         names.forEach((name, index) => assert.deepEqual(after.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all(), rows[index]));
         if (conflict) {
           assert.equal(after.prepare('SELECT marker FROM default_word_overrides').get()!.marker, 'preserved');

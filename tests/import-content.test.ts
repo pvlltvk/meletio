@@ -55,7 +55,7 @@ test('schema v1 migration preserves accounts sessions attempt snapshots and rece
   original.close();
   const migrated = openDatabase(path);
   try {
-    assert.equal(migrated.prepare('PRAGMA user_version').get()!.user_version, 4);
+    assert.equal(migrated.prepare('PRAGMA user_version').get()!.user_version, 5);
     tables.forEach((table, index) => assert.deepEqual(migrated.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(), before[index]));
     assert.equal(migrated.prepare('SELECT COUNT(*) AS count FROM imported_decks').get()!.count, 0);
     assert.deepEqual(new ContentRepository(migrated, demo).deck('first', 'demo'), {...demo.decks[0], wordCount: demo.decks[0].words.length, revision: 1, imported: false, editable: true});

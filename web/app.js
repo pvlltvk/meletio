@@ -24,6 +24,9 @@ let answers = [];
 let position = 0;
 let selected = null;
 let lastSession = null;
+let review = null;
+let reviewTimer;
+let reviewLoadedAt = 0;
 let searchQuery = '';
 let autoPronounce = false;
 let storageAvailable = true;
@@ -103,6 +106,8 @@ async function request(path, body, options = {}) {
 }
 
 function clearPractice() {
+  clearTimeout(reviewTimer);
+  review = null;
   attempt = null;
   attemptDeck = null;
   attemptSnapshotId = null;
@@ -369,6 +374,8 @@ async function loadPractice(nextScreen = 'study') {
     if (result.attempt) await useAttempt(result.attempt, current);
     if (current !== generation) return;
     lastSession = result.latestResult;
+    review = result.review;
+    reviewLoadedAt = performance.now();
     deckLoaded = true;
   } catch (error) {
     if (current !== generation) return;
@@ -409,6 +416,22 @@ async function initializeAccount() {
       busy = false;
       render();
     }
+  }
+}
+
+async function refreshStudy(focus = false) {
+  const focused = document.activeElement;
+  const heading = app.contains(focused) && focused.tagName === 'H1';
+  const attribute = app.contains(focused) ? ['data-start', 'data-resume', 'data-screen', 'data-results', 'data-word', 'data-logout'].find(name => focused.hasAttribute(name)) : null;
+  const value = attribute ? focused.getAttribute(attribute) : null;
+  const current = generation + 1;
+  await loadPractice();
+  if (generation !== current || screen !== 'study' || !user || loadError) return;
+  if (focus || heading) focusHeading();
+  else if (attribute) {
+    const target = app.querySelector(`[${attribute}="${CSS.escape(value)}"]`);
+    if (target) focusElement(target);
+    else focusHeading();
   }
 }
 
@@ -622,12 +645,23 @@ function canPractice() {
 function study() {
   if (!deck) { emptyLearningSets('study'); return; }
   const active = questions.length > 0 && position < questions.length;
-  const startAction = active
+  let startAction = active
     ? `<button class="primary" data-resume="true">Resume practice ${icon('arrow')}</button><button class="text-button restart" data-start="all">Start a fresh session</button>`
     : canPractice()
       ? `<button class="primary" data-start="all">Start practice ${icon('arrow')}</button>`
       : '<p class="muted">Add four distinct words with different meanings to start a quiz.</p>';
-  app.innerHTML = chrome(`<section class="intro"><h1>Study</h1></section><section class="hero"><div class="hero-copy"><p class="eyebrow">${escapeHtml(deck.title)}</p><h2>Practice your vocabulary</h2><p>${terms().length} words · Multiple choice</p>${startAction}</div></section>${lastSession ? `<p class="footnote">Last practice: ${lastSession.correct} of ${lastSession.total} correct.${serverBacked ? ' <button class="text-button" data-results="true">View results</button>' : ''}</p>` : ''}<section><div class="section-title"><h2>Vocabulary</h2><button class="text-button" data-screen="vocabulary">View vocabulary →</button></div><div class="preview-grid">${terms().slice(0,3).map(wordCard).join('')}</div></section>`, 'study');
+  let description = `${terms().length} words · Multiple choice`;
+  if (serverBacked && review) {
+    const available = review.due + review.new > 0;
+    description = `${review.due} due for review · ${review.new} new words · Up to ${review.lessonSize} per lesson`;
+    const next = review.nextDue === null ? '' : ` Next review: ${new Date(review.nextDue).toLocaleString()}.`;
+    startAction = active
+      ? `<button class="primary" data-resume="true">Resume ${attempt?.mode === 'lesson' ? 'lesson' : 'practice'} ${icon('arrow')}</button>${available ? '<button class="text-button restart" data-start="lesson">Start a fresh lesson</button>' : ''}`
+      : available ? `<button class="primary" data-start="lesson">Start lesson ${icon('arrow')}</button>`
+        : `<p class="muted">${canPractice() ? `Your review is up to date.${escapeHtml(next)}` : 'Add four distinct words with different meanings to start a quiz.'}</p>`;
+    if (canPractice()) startAction += '<button class="text-button" data-start="all">Practice all words</button>';
+  }
+  app.innerHTML = chrome(`<section class="intro"><h1>Study</h1></section><section class="hero"><div class="hero-copy"><p class="eyebrow">${escapeHtml(deck.title)}</p><h2>Practice your vocabulary</h2><p>${description}</p>${startAction}</div></section>${lastSession ? `<p class="footnote">Last ${lastSession.mode === 'lesson' ? 'lesson' : 'practice'}: ${lastSession.correct} of ${lastSession.total} correct.${serverBacked ? ' <button class="text-button" data-results="true">View results</button>' : ''}</p>` : ''}<section><div class="section-title"><h2>Vocabulary</h2><button class="text-button" data-screen="vocabulary">View vocabulary →</button></div><div class="preview-grid">${terms().slice(0,3).map(wordCard).join('')}</div></section>`, 'study');
 }
 
 function emptyLearningSets(active) {
@@ -732,7 +766,7 @@ async function mutateContent(action, values = {}) {
   }
 }
 
-function startPractice({resume = false, onlyMissed = false} = {}) {
+function startPractice({resume = false, onlyMissed = false, lesson = false} = {}) {
   stopAudio();
   if (!deck) return;
   if (serverBacked) {
@@ -743,7 +777,7 @@ function startPractice({resume = false, onlyMissed = false} = {}) {
       focusHeading();
     } else {
       const path = onlyMissed ? `/api/training/${attempt.id}/retry` : '/api/training';
-      saveTraining(path, onlyMissed ? {} : {deckId: deck.id}, async result => {
+      saveTraining(path, onlyMissed ? {} : {deckId: deck.id, ...(lesson ? {mode: 'lesson'} : {})}, async result => {
         await useAttempt(result.attempt);
         screen = 'practice';
       });
@@ -789,12 +823,13 @@ function practice() {
 function results() {
   const correct = answers.filter(answer => answer.correct).length;
   const missed = answers.filter(answer => !answer.correct);
-  lastSession = serverBacked ? {id: attempt.id, deckId: attempt.deckId, correct, total: answers.length, completedAt: attempt.completedAt} : {correct, total: answers.length};
+  const lesson = serverBacked && attempt.mode === 'lesson';
+  lastSession = serverBacked ? {id: attempt.id, deckId: attempt.deckId, correct, total: answers.length, completedAt: attempt.completedAt, ...(lesson ? {mode: 'lesson'} : {})} : {correct, total: answers.length};
   const rows = missed.map(({word}) => {
     const listen = listenButton(word);
     return `<div class="result-row">${word.image ? `<img src="${escapeHtml(word.image)}" alt="">` : ''}<div><strong>${termMarkup(word)}</strong><small>${meaningMarkup(word)}</small></div>${listen}</div>`;
   }).join('');
-  app.innerHTML = `<main class="quiz-shell result"><div class="result-icon">${icon('check')}</div><h1>Practice complete</h1><p>${missed.length ? 'Review the words you missed.' : 'All words correct.'}</p><section class="score-panel" aria-label="Session results"><div><strong>${correct}<span style="display:inline;font-size:19px"> / ${answers.length}</span></strong><span>Correct answers</span></div><div><strong>${missed.length}</strong><span>Words to revisit</span></div></section><div class="result-actions">${missed.length ? '<button class="primary wide" data-start="mistakes">Practice missed words</button>' : '<button class="primary wide" data-start="all">Practice again</button>'}<button class="secondary wide" data-screen="study">Back to Study</button></div>${missed.length ? `<section class="result-list"><div class="section-title"><h2>Another look</h2></div>${rows}<p id="audio-status" class="audio-status visually-hidden" role="status" aria-live="polite"></p></section>` : ''}</main>`;
+  app.innerHTML = `<main class="quiz-shell result"><div class="result-icon">${icon('check')}</div><h1>${lesson ? 'Lesson' : 'Practice'} complete</h1><p>${missed.length ? 'Review the words you missed.' : 'All words correct.'}</p>${lesson ? '<p class="footnote">Your answers are saved. Extra practice keeps review dates.</p>' : ''}<section class="score-panel" aria-label="Session results"><div><strong>${correct}<span style="display:inline;font-size:19px"> / ${answers.length}</span></strong><span>Correct answers</span></div><div><strong>${missed.length}</strong><span>Words to revisit</span></div></section><div class="result-actions">${missed.length ? '<button class="primary wide" data-start="mistakes">Practice missed words</button>' : lesson ? '<button class="primary wide" data-screen="study">Back to Study</button>' : '<button class="primary wide" data-start="all">Practice again</button>'}${lesson && !missed.length ? '' : '<button class="secondary wide" data-screen="study">Back to Study</button>'}</div>${missed.length ? `<section class="result-list"><div class="section-title"><h2>Another look</h2></div>${rows}<p id="audio-status" class="audio-status visually-hidden" role="status" aria-live="polite"></p></section>` : ''}</main>`;
 }
 
 function defaultMapping(fields) {
@@ -1095,6 +1130,7 @@ function settings() {
 }
 
 function render() {
+  clearTimeout(reviewTimer);
   if (!user || screen !== 'settings') clearPasswordForm();
   if (serverBacked && (!accountLoaded || !user || !deckLoaded)) {
     accountView();
@@ -1110,6 +1146,9 @@ function render() {
   else if (screen === 'settings') settings();
   updateControls();
   prepareVisibleAudio();
+  if (serverBacked && user && screen === 'study' && !busy && !failedOperation && !document.hidden && review && review.nextDue !== null && review.nextDue > review.asOf) {
+    reviewTimer = setTimeout(() => { if (!busy && !failedOperation && screen === 'study') refreshStudy(); }, Math.min(Math.max(1000, review.nextDue - review.asOf - (performance.now() - reviewLoadedAt)), 2147483647));
+  }
 }
 
 let selectedWord;
@@ -1253,9 +1292,9 @@ app.addEventListener('click', event => {
       return;
     }
     if (!user || !deckLoaded) return;
-    if (button.dataset.screen === 'study' && screen === 'results') {
+    if (button.dataset.screen === 'study') {
       stopAudio();
-      loadPractice();
+      refreshStudy(true);
       return;
     }
   }
@@ -1284,7 +1323,7 @@ app.addEventListener('click', event => {
       focusHeading();
     }
   } else if (button.dataset.start) {
-    startPractice({onlyMissed: button.dataset.start === 'mistakes'});
+    startPractice({onlyMissed: button.dataset.start === 'mistakes', lesson: button.dataset.start === 'lesson'});
   } else if (button.dataset.resume) {
     startPractice({resume: true});
   } else if (button.dataset.word) {
@@ -1387,16 +1426,22 @@ let returnScrollY = 0;
 let noticeRevision = 0;
 
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) stopAudio();
+  if (document.hidden) { stopAudio(); clearTimeout(reviewTimer); }
+  else if (serverBacked && user && screen === 'study' && !busy && !failedOperation) refreshStudy();
 });
 window.addEventListener('pagehide', () => {
+  clearTimeout(reviewTimer);
   stopAudio();
   clearPasswordForm();
   const loginPassword = app.querySelector('#account-password');
   if (loginPassword) loginPassword.value = '';
 });
 window.addEventListener('pageshow', event => {
-  if (event.persisted) { clearPasswordForm(); render(); }
+  if (event.persisted) {
+    clearPasswordForm();
+    if (serverBacked && user && screen === 'study' && !busy && !failedOperation) refreshStudy();
+    else render();
+  }
 });
 
 if (serverBacked) {

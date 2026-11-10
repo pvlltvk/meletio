@@ -46,7 +46,8 @@ async function main() {
       ['polish-browser-check', {url: origin + '/', packagePath: base.archivePath, updatePackagePath: update.archivePath}],
       ['polish-recovery-browser-check', {url: origin + '/', packagePath: child.archivePath}],
       ['follow-up-browser-check', {url: origin + '/', packagePath: base.archivePath}],
-      ['account-browser-check', {url: origin + '/', closedUrl: closedOrigin + '/'}]
+      ['account-browser-check', {url: origin + '/', closedUrl: closedOrigin + '/'}],
+      ['lesson-browser-check', {url: origin + '/'}]
     ];
     await mkdir(join(root, 'artifacts'), {recursive: true});
     runnerDirectory = await mkdtemp(join(root, 'artifacts/browser-'));

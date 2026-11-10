@@ -12,7 +12,7 @@ import {openDatabase} from '../server/database';
 const demo = {uiLanguage: 'en', decks: []};
 
 function asVersionTwo(db: DatabaseSync) {
-  db.exec('DROP TABLE default_word_overrides; DROP TABLE default_deck_overrides; DROP TABLE content_mutations; DROP TABLE word_overrides; DROP TABLE deck_overrides; DROP INDEX imported_decks_source; PRAGMA user_version=2;');
+  db.exec('DROP TABLE word_reviews; DROP TABLE default_word_overrides; DROP TABLE default_deck_overrides; DROP TABLE content_mutations; DROP TABLE word_overrides; DROP TABLE deck_overrides; DROP INDEX imported_decks_source; PRAGMA user_version=2;');
 }
 
 function seed(db: DatabaseSync, owner: string, count = 1) {
@@ -37,7 +37,7 @@ test('schema two migration preserves every original table row and adds only empt
     before.close();
     const after = openDatabase(path);
     try {
-      assert.equal(after.prepare('PRAGMA user_version').get()!.user_version, 4);
+      assert.equal(after.prepare('PRAGMA user_version').get()!.user_version, 5);
       names.forEach((name, i) => assert.deepEqual(after.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all(), rows[i]));
       for (const name of ['word_overrides', 'deck_overrides', 'content_mutations', 'default_word_overrides', 'default_deck_overrides']) assert.equal(after.prepare(`SELECT count(*) n FROM ${name}`).get()!.n, 0);
       assert.equal(after.prepare('PRAGMA integrity_check').get()!.integrity_check, 'ok');

@@ -118,6 +118,25 @@ async function main() {
     }
     console.log('PASS: private imported deck, media, training snapshot and commit receipt survive a real process restart');
 
+    const lesson = (await request('/api/training?format=compact', {deckId: 'everyday-el', mode: 'lesson', requestId: randomUUID()})).attempt;
+    assert.equal(lesson.mode, 'lesson');
+    const lessonSnapshot = (await request(`/api/training/${lesson.id}/snapshot`)).snapshot;
+    const lessonAnswer = {position: 0, revision: 0, optionId: lessonSnapshot.questions[0].wordId, requestId: randomUUID()};
+    const savedLesson = (await request(`/api/training/${lesson.id}/answer?format=compact`, lessonAnswer)).attempt;
+    const reviewBefore = (await request('/api/training?deckId=everyday-el&format=compact')).review;
+    assert.equal(reviewBefore.new, 9);
+    assert.equal(reviewBefore.due, 0);
+    assert(reviewBefore.nextDue > reviewBefore.asOf);
+    await stop();
+    await start();
+    const restoredLesson = await request('/api/training?deckId=everyday-el&format=compact');
+    assert.deepEqual(restoredLesson.attempt, savedLesson);
+    assert.deepEqual((await request(`/api/training/${lesson.id}/snapshot`)).snapshot, lessonSnapshot);
+    assert.deepEqual((await request(`/api/training/${lesson.id}/answer?format=compact`, lessonAnswer)).attempt, savedLesson);
+    const reviewAfter = (await request('/api/training?deckId=everyday-el&format=compact')).review;
+    for (const field of ['new', 'due', 'nextDue', 'lessonSize']) assert.equal(reviewAfter[field], reviewBefore[field]);
+    console.log('PASS: lesson snapshot, saved feedback, review dates and answer replay survive a real process restart');
+
   } finally { await stop(); await rm(directory, {recursive: true, force: true}); }
 }
 
