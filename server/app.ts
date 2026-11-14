@@ -57,7 +57,7 @@ function mediaResponse(request: IncomingMessage, response: ServerResponse, media
   response.end(request.method === 'HEAD' ? undefined : bytes.subarray(start, end + 1));
 }
 
-function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+function readBody(request: IncomingMessage, limit = 16384): Promise<Record<string, unknown>> {
   if (request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') throw new ApiError(415, 'unsupported_type', 'Send JSON requests.');
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -71,7 +71,7 @@ function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
     request.on('data', (chunk: Buffer) => {
       if (finished) return;
       size += chunk.length;
-      if (size > 16384) {
+      if (size > limit) {
         finished = true;
         clearTimeout(timer);
         reject(new ApiError(413, 'body_too_large', 'Request is too large.'));
@@ -153,12 +153,14 @@ export function createApplication(options: ApplicationOptions) {
         if (method === 'POST' && request.headers.origin !== options.origin && (!bearer || request.headers.origin !== undefined)) throw new ApiError(403, 'invalid_origin', 'Request origin is not allowed.');
         const expectedUser = request.headers['x-meletio-user'];
         if (expectedUser !== undefined && expectedUser !== user.id) throw new ApiError(401, 'account_changed', 'Your account changed in another tab. Log in again to continue.');
-        const body = method === 'POST' ? await readBody(request) : {};
+        const wordsMatch = /^\/api\/authoring\/decks\/([a-zA-Z0-9-]{1,128})\/words$/.exec(path);
+        const body = method === 'POST' ? await readBody(request, wordsMatch ? 1024 * 1024 : 16384) : {};
         if (method === 'POST' && principal().id !== user.id) throw new ApiError(401, 'account_changed', 'Your account changed. Log in again.');
         const deckMatch = /^\/api\/authoring\/decks\/([a-zA-Z0-9-]{1,128})$/.exec(path);
         if (path === '/api/authoring/decks' && method === 'GET') json(response, 200, authoring.list(user.id, url.searchParams.get('cursor') ?? undefined));
         else if (path === '/api/authoring/decks' && method === 'POST') json(response, 201, authoring.create(user.id, body));
         else if (deckMatch && method === 'GET') json(response, 200, authoring.read(user.id, deckMatch[1]));
+        else if (wordsMatch && method === 'POST') json(response, 200, authoring.batch(user.id, wordsMatch[1], body));
         else throw new ApiError(404, 'not_found', 'Endpoint not found.');
         return;
       }
