@@ -2,6 +2,8 @@ import {createHash, randomUUID} from 'node:crypto';
 import type {DatabaseSync} from 'node:sqlite';
 import {ContentRepository} from './content';
 import {transaction} from './database';
+import {IMPORT_LIMITS} from './import-types';
+import {sniffMedia} from './media-types';
 import {ApiError, fields, invalid, languageField, stringField} from './types';
 
 function canonical(value: unknown, depth = 0): unknown {
@@ -58,6 +60,20 @@ export class Authoring {
         .run(deckId, userId, title, termLang, meaningLang, termDir, meaningDir, 1, '{"kind":"authored"}', '', instant, instant);
       this.content.deck(userId, deckId);
       return {deck: this.content.metadata(userId, deckId)};
+    });
+  }
+
+  upload(userId: string, requestId: string, filename: string, bytes: Buffer) {
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    return this.write(userId, requestId, 'POST /api/authoring/media', {filename, sha256}, () => {
+      if (bytes.length > IMPORT_LIMITS.mediaBytes) throw new ApiError(413, 'body_too_large', 'Media exceeds the 512 KiB limit.');
+      const mime = sniffMedia(bytes, filename);
+      if (!mime) throw new ApiError(415, 'unsupported_media', 'Unsupported media type or invalid file signature.');
+      const existing = this.db.prepare('SELECT id FROM imported_media WHERE owner_id = ? AND sha256 = ? AND mime = ?')
+        .get(userId, sha256, mime) as {id: string} | undefined;
+      const id = existing?.id || randomUUID();
+      if (!existing) this.db.prepare('INSERT INTO imported_media VALUES (?,?,?,?,?,?)').run(id, userId, sha256, mime, bytes.length, bytes);
+      return {id, kind: mime.startsWith('image/') ? 'image' : 'audio', mime, size: bytes.length};
     });
   }
 
