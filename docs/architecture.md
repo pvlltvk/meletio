@@ -17,7 +17,7 @@ An API failure never switches the app to the portable demo.
 Authentication uses canonical email, asynchronous salted scrypt and opaque session
 cookies (HttpOnly, SameSite=Strict, optionally Secure). Only token hashes are stored;
 login rotates sessions and logout revokes them. No recovery/email verification is
-provided. Exact configured Origin is required for mutations. The browser supplies
+provided. Exact configured Origin is required for cookie-authenticated mutations. The browser supplies
 its cached user ID; a cookie account mismatch rejects private operations before
 accepting uploads or applying changes. Owner checks also cover snapshots, answer
 history, staged files and committed media. Private responses use no-store/nosniff.
@@ -28,6 +28,46 @@ Routes include auth, paged /api/decks, /api/decks/:id, /api/media/:id,
 and /api/imports/{uploads,current} plus stage preview/commit/cancel/media endpoints.
 Normal JSON bodies are bounded at16KiB/15seconds. Binary upload authentication and
 Origin checks run before streaming. The app binds loopback unless configured.
+
+## Authoring
+
+Schema6 adds personal access tokens with separate metadata IDs and SHA-256 secret
+hashes. The current account's Settings controls create a token once, list only
+active metadata and revoke individual tokens. Tokens expire after90days, with
+at most20active/account. Password changes revoke them inside the existing guarded
+transaction; ordinary logout retains them. The UI clears displayed secrets on
+navigation, account changes, pagehide and cached pageshow, and ignores responses
+from invalidated forms. No plaintext token response is stored as a receipt.
+
+Dedicated /api/authoring routes select bearer authentication when Authorization
+is present, otherwise the existing cookie session. Invalid bearer credentials
+never fall back. Cookie writes require exact Origin; bearer writes permit an
+absent Origin but reject a foreign one. The cached-account header is checked
+against the selected principal. Authentication precedes body consumption and is
+checked again after reading a write body, before synchronous persistence.
+Bearer credentials are rejected outside the authoring namespace.
+
+Native sets reuse imported_decks/imported_words/imported_media with an explicit
+source_json kind marker. Effective metadata has authored:true/imported:false,
+while existing Anki/default metadata keeps its shape. Catalog filtering happens
+before pagination, source mappings are hidden for native sets, and Anki preview
+and commit reject native destinations. Existing persisted overlays and deletion
+controls apply to native content. There is no separate training model.
+
+Content mutations use account-scoped receipts with canonical object-key ordering
+and operation/target fingerprints. Batch validation, stable word upserts, effective
+size checks, revision and replay response share one transaction. A receipt is
+looked up before current revision checks. Batches contain at most100words/1MiB;
+sets retain the2000word/1MiB budget. API text updates remove masking local text
+overrides for accepted words while omitted words/media remain unchanged.
+
+Raw binary uploads are capped at512KiB and use the importer's unchanged filename
+and signature checks. There is no image processing in the HTTP process; larger
+pictures must be resized by the caller. Signature checks do not establish codec
+validity. Immutable media deduplication and content receipts share a transaction;
+wrong-owner/wrong-kind attachments fail. Existing owner media responses provide
+GET/HEAD/ranges through the dedicated authoring namespace. No remote fetching,
+retention policy or deployment hardening is introduced. See [API](api.md).
 
 ## Private Anki import
 
@@ -110,7 +150,7 @@ and navigation cancel it, and status announcements do not shift visible layout.
 
 ## Durable training and migration
 
-Schema2,3,4 and5 use additive transactions. Existing users/sessions/attempts
+Schema2 through6 use additive transactions. Existing users/sessions/attempts
 and receipts remain byte-identical; unknown newer versions are rejected. SQLite
 uses foreign keys, WAL and a busy timeout; SQL values are parameterized.
 

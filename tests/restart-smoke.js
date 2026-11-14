@@ -137,6 +137,48 @@ async function main() {
     for (const field of ['new', 'due', 'nextDue', 'lessonSize']) assert.equal(reviewAfter[field], reviewBefore[field]);
     console.log('PASS: lesson snapshot, saved feedback, review dates and answer replay survive a real process restart');
 
+    const access = await request('/api/account/tokens', {name: 'Restart authoring'});
+    async function author(path, body) {
+      const response = await fetch(origin + path, {method: body === undefined ? 'GET' : 'POST',
+        headers: {Authorization: `Bearer ${access.token}`, ...(body === undefined ? {} : {'Content-Type': 'application/json'})},
+        body: body === undefined ? undefined : JSON.stringify(body)});
+      const result = await response.json();
+      assert(response.ok, `Authoring HTTP ${response.status}: ${result.error?.code || 'request failed'}`);
+      return result;
+    }
+    const nativeBody = {requestId: randomUUID(), title: 'Authored restart vocabulary',
+      termLang: 'el', meaningLang: 'en', termDir: 'ltr', meaningDir: 'ltr'};
+    const native = await author('/api/authoring/decks', nativeBody);
+    const mediaRequestId = randomUUID();
+    async function uploadPicture() {
+      const response = await fetch(origin + '/api/authoring/media', {method: 'POST',
+        headers: {Authorization: `Bearer ${access.token}`, 'Content-Type': 'application/octet-stream',
+          'X-Request-Id': mediaRequestId, 'X-Media-Filename': 'picture.png'}, body: png});
+      assert.equal(response.status, 201);
+      return response.json();
+    }
+    const nativeMedia = await uploadPicture();
+    const nativeBatch = {requestId: randomUUID(), revision: native.deck.revision,
+      words: Array.from({length: 4}, (_, index) => ({term: `native ${index}`, meaning: `meaning ${index}`, imageMediaId: nativeMedia.id}))};
+    const nativeWords = await author(`/api/authoring/decks/${native.deck.id}/words`, nativeBatch);
+    const nativeDeck = await author(`/api/authoring/decks/${native.deck.id}`);
+    await stop();
+    await start();
+    assert.deepEqual(await author(`/api/authoring/decks/${native.deck.id}`), nativeDeck);
+    assert.deepEqual(await author('/api/authoring/decks', nativeBody), native);
+    assert.deepEqual(await uploadPicture(), nativeMedia);
+    assert.deepEqual(await author(`/api/authoring/decks/${native.deck.id}/words`, nativeBatch), nativeWords);
+    assert.equal((await author(`/api/authoring/decks/${native.deck.id}`)).deck.words.length, 4);
+    const nativeBytes = await fetch(origin + `/api/authoring/media/${nativeMedia.id}`, {headers: {Authorization: `Bearer ${access.token}`}});
+    assert.equal(nativeBytes.status, 200);
+    assert.deepEqual(Buffer.from(await nativeBytes.arrayBuffer()), png);
+    await request(`/api/account/tokens/${access.id}/revoke`, {});
+    await stop();
+    await start();
+    const revoked = await fetch(origin + '/api/authoring/decks', {headers: {Authorization: `Bearer ${access.token}`}});
+    assert.equal(revoked.status, 401);
+    console.log('PASS: native vocabulary, private media, authoring tokens, revocation and all write receipts survive real process restarts');
+
   } finally { await stop(); await rm(directory, {recursive: true, force: true}); }
 }
 

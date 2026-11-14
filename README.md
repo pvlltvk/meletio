@@ -83,6 +83,22 @@ recordings. Words without audio show “No recording.” Personal media remain
 outside this project. Browser audio tests inject a silent WAV only in an isolated
 test context; this is not pronunciation or demo content.
 
+## Author vocabulary from scripts
+
+In Settings, choose **Manage access tokens**, name a token and copy its secret
+when it is created. Scripts can create private learning sets, add or update words
+in batches, and upload pictures and human recordings without an Anki export.
+See the [authoring API reference and examples](docs/api.md).
+
+Tokens expire after 90 days and can be revoked in Settings. Changing your password
+revokes all personal tokens; logging out keeps them. A token authorizes only the
+authoring API for its account. It cannot manage accounts or submit practice.
+
+API writes target native authored sets. These sets work with the existing
+vocabulary, practice, lessons and edit/delete controls. Browser create-set and
+add-word forms are planned separately. Uploaded files must already fit 512 KiB;
+the API uses the same media formats and signature checks as Anki import.
+
 ## Import from Anki
 
 In Settings, choose **Choose Anki file** and select a deck export (`.apkg`).
