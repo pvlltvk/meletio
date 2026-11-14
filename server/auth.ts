@@ -93,6 +93,7 @@ export class Auth {
         .run(`${nextSalt}:${nextKey.toString('hex')}`, user.id, row.password_hash);
       if (changed.changes !== 1) throw new ApiError(409, 'credentials_changed', 'Your password changed in another session. Try again.');
       this.db.prepare('DELETE FROM auth_sessions WHERE user_id = ? AND token_hash <> ?').run(user.id, hashToken(this.token(cookie)!));
+      this.db.prepare('DELETE FROM access_tokens WHERE owner_id = ?').run(user.id);
     });
     this.limits.success(user.email);
     return {changed: true};

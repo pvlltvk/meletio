@@ -2,6 +2,7 @@ import {createServer, type IncomingMessage, type ServerResponse} from 'node:http
 import {readFile} from 'node:fs/promises';
 import {dirname, join, resolve} from 'node:path';
 import {Auth, sessionCookie} from './auth';
+import {AccessTokens} from './access-tokens';
 import {AuthLimitError} from './auth-limits';
 import {openDatabase} from './database';
 import {Training} from './training';
@@ -103,6 +104,7 @@ export function createApplication(options: ApplicationOptions) {
   const db = openDatabase(options.databasePath);
   const now = options.now || Date.now;
   const auth = new Auth(db, now);
+  const accessTokens = new AccessTokens(db, now);
   const content = new ContentRepository(db, options.content);
   const training = new Training(db, content, now);
   const contentMutations = new ContentMutations(db, content, now);
@@ -141,6 +143,7 @@ export function createApplication(options: ApplicationOptions) {
         return;
       }
       if (!['GET', 'POST', 'HEAD'].includes(method)) throw new ApiError(405, 'method_not_allowed', 'Method not allowed.');
+      if (request.headers.authorization !== undefined) throw new ApiError(401, 'unauthorized', 'Access tokens are only accepted by the authoring API.');
       if (method === 'POST' && request.headers.origin !== options.origin) throw new ApiError(403, 'invalid_origin', 'Request origin is not allowed.');
       const cookie = request.headers.cookie;
       if (path === '/api/auth/config' && method === 'GET') {
@@ -173,6 +176,20 @@ export function createApplication(options: ApplicationOptions) {
       const user = auth.user(cookie);
       if (path === '/api/account/password' && method === 'POST') {
         json(response, 200, await auth.changePassword(body, cookie, request.socket.remoteAddress || 'unknown'));
+        return;
+      }
+      if (path === '/api/account/tokens' && method === 'GET') {
+        json(response, 200, {tokens: accessTokens.list(user.id)});
+        return;
+      }
+      if (path === '/api/account/tokens' && method === 'POST') {
+        json(response, 201, accessTokens.create(user.id, body));
+        return;
+      }
+      const tokenMatch = /^\/api\/account\/tokens\/([a-zA-Z0-9-]{1,128})\/revoke$/.exec(path);
+      if (tokenMatch && method === 'POST') {
+        fields(body, []);
+        json(response, 200, accessTokens.revoke(user.id, tokenMatch[1]));
         return;
       }
       const compact = url.searchParams.get('format') === 'compact';

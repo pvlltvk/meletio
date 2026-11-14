@@ -47,6 +47,13 @@ let passwordPending = false;
 let passwordFeedback = '';
 let passwordFailed = false;
 let passwordRevision = 0;
+let tokenPanelOpen = false;
+let accessTokens = [];
+let createdToken = null;
+let tokenPending = false;
+let tokenFeedback = '';
+let tokenFailed = false;
+let tokenRevision = 0;
 let accountEmail = '';
 let catalogLoaded = false;
 let catalogCursor = null;
@@ -125,6 +132,7 @@ function clearPractice() {
 function clearAccount() {
   generation++;
   clearPasswordForm();
+  clearTokenControls();
   stopAudio();
   clearSearchAnnouncement();
   user = null;
@@ -269,6 +277,71 @@ function clearPasswordForm() {
   passwordFailed = false;
 }
 
+function clearTokenControls() {
+  tokenRevision++;
+  app.querySelector('#created-token')?.remove();
+  tokenPanelOpen = false;
+  accessTokens = [];
+  createdToken = null;
+  tokenPending = false;
+  tokenFeedback = '';
+  tokenFailed = false;
+}
+
+function tokenSettings() {
+  const feedback = tokenFeedback ? `<p role="${tokenFailed ? 'alert' : 'status'}" class="${tokenFailed ? 'account-error' : ''}">${escapeHtml(tokenFeedback)}</p>` : '';
+  const secret = createdToken ? `<label for="created-token">New access token</label><textarea id="created-token" readonly autocomplete="off" spellcheck="false">${escapeHtml(createdToken.token)}</textarea><p>Copy this token now. It will not be shown again.</p><button class="text-button" data-token-dismiss="true">Dismiss token</button>` : '';
+  const panel = tokenPanelOpen ? `<div id="token-controls">${feedback}${secret}<form id="token-form" class="content-form"><label for="token-name">Token name</label><input id="token-name" name="name" maxlength="120" autocomplete="off" required><button class="secondary" type="submit">Create token</button></form><div>${accessTokens.map(value => `<div class="switch-row" data-token-row="${escapeHtml(value.id)}"><span><strong>${escapeHtml(value.name)}</strong><small>Expires ${escapeHtml(new Date(value.expiresAt).toLocaleDateString())}</small></span><button class="text-button" data-token-revoke="${escapeHtml(value.id)}">Revoke</button></div>`).join('')}</div><button class="text-button" data-tokens-close="true">Close token controls</button></div>` : '<button class="secondary" data-tokens-open="true">Manage access tokens</button>';
+  return `<section class="settings-card" aria-labelledby="access-token-title"><h2 id="access-token-title">Access tokens</h2><p>Let scripts add vocabulary to your account. Tokens expire after 90 days. Changing your password revokes all tokens.</p>${panel}</section>`;
+}
+
+async function manageTokens(action, form, id) {
+  if (tokenPending || !user) return;
+  const current = generation;
+  const revision = ++tokenRevision;
+  const name = form?.elements.name.value;
+  form?.reset();
+  createdToken = null;
+  tokenPanelOpen = true;
+  tokenPending = true;
+  tokenFeedback = action === 'list' ? 'Loading tokens…' : 'Saving…';
+  tokenFailed = false;
+  render();
+  try {
+    if (action === 'create') {
+      const result = await request('/api/account/tokens', {name});
+      if (current !== generation || revision !== tokenRevision) return;
+      createdToken = result;
+      accessTokens = [...accessTokens, {id: result.id, name: result.name, createdAt: result.createdAt, expiresAt: result.expiresAt}];
+      tokenFeedback = 'Token created.';
+    } else if (action === 'revoke') {
+      await request(`/api/account/tokens/${encodeURIComponent(id)}/revoke`, {});
+      if (current !== generation || revision !== tokenRevision) return;
+      accessTokens = accessTokens.filter(value => value.id !== id);
+      tokenFeedback = 'Token revoked.';
+    } else {
+      const result = await request('/api/account/tokens');
+      if (current !== generation || revision !== tokenRevision) return;
+      accessTokens = result.tokens;
+      tokenFeedback = accessTokens.length ? '' : 'No active tokens.';
+    }
+  } catch (error) {
+    if (current !== generation || revision !== tokenRevision) return;
+    if (error.status === 401) { clearAccount(); authError = 'Your session ended. Log in to continue.'; }
+    else {
+      tokenFailed = true;
+      tokenFeedback = action === 'create' && (!error.status || error.status >= 500)
+        ? 'Token creation could not be confirmed. Close and reopen token controls, revoke the named token if listed, then create another.' : error.message;
+    }
+  } finally {
+    if (current === generation && revision === tokenRevision) {
+      tokenPending = false;
+      render();
+      app.querySelector(createdToken ? '#created-token' : '#token-name')?.focus();
+    } else if (!user) render();
+  }
+}
+
 function accountSettings() {
   const feedback = `<p id="password-feedback" class="${passwordFailed ? 'account-error' : 'password-status'}" role="${passwordFailed ? 'alert' : 'status'}">${escapeHtml(passwordFeedback)}</p>`;
   const form = passwordFormOpen ? `<form id="password-form" class="content-form"><label for="current-password">Current password</label><input id="current-password" name="currentPassword" type="password" autocomplete="current-password" minlength="12" maxlength="256" required><label for="new-password">New password</label><input id="new-password" name="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required aria-describedby="new-password-help"><p id="new-password-help">Use at least 12 characters.</p><label for="confirm-password">Confirm new password</label><input id="confirm-password" name="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required>${feedback}<div class="content-actions"><button class="primary" type="submit">${passwordPending ? 'Saving…' : 'Save password'}</button><button class="secondary" type="button" data-password-cancel="true">Cancel</button></div></form>` : `${feedback}<button class="secondary" data-change-password="true">Change password</button>`;
@@ -300,6 +373,7 @@ async function savePassword(form) {
     if (result.changed !== true) throw new Error('Unconfirmed password change.');
     passwordFormOpen = false;
     passwordFeedback = 'Password changed. Other sessions signed out.';
+    clearTokenControls();
   } catch (error) {
     if (current !== generation || revision !== passwordRevision) return;
     if (error.status === 401) { clearAccount(); authError = 'Your session ended. Log in to continue.'; }
@@ -336,6 +410,7 @@ function updateControls() {
     control.disabled = Boolean(busy || failedOperation || importBusy) && !(importBusy && control.id === 'import-file') && !control.hasAttribute('data-retry') && !control.hasAttribute('data-reload') && !(importBusy && (control.hasAttribute('data-import-cancel') || control.hasAttribute('data-import-recover')));
   });
   if (passwordPending) app.querySelectorAll('#password-form button,#password-form input').forEach(control => { control.disabled = true; });
+  if (tokenPending) app.querySelectorAll('#token-controls button,#token-controls input').forEach(control => { control.disabled = true; });
 }
 
 function savedLearningSet() {
@@ -357,6 +432,7 @@ function rememberLearningSet(id) {
 
 async function loadPractice(nextScreen = 'study') {
   clearPasswordForm();
+  clearTokenControls();
   stopAudio();
   clearSearchAnnouncement();
   const current = ++generation;
@@ -1145,12 +1221,13 @@ function importSettings() {
 
 function settings() {
   const management = serverBacked && deck?.editable ? `<section class="settings-card"><h2>Manage ${escapeHtml(deck.title)}</h2>${renameDraft !== null ? `<form id="deck-rename-form" class="content-form"><label>Set name<input name="title" maxlength="120" required value="${escapeHtml(renameDraft)}"></label>${contentFeedback()}<div class="content-actions"><button class="primary" type="submit">Save name</button><button class="secondary" type="button" data-rename-cancel="true">Cancel</button></div></form>` : `<div class="content-actions"><button class="secondary" data-rename-set="true">Rename set</button>${deck.imported ? '<button class="text-button" data-restore-media="true">Restore missing media</button>' : ''}<button class="text-button danger" data-delete-set="true">Delete set</button></div>${contentFeedback()}`}${deleteConfirmation === 'set' ? `<section class="confirmation" role="alert"><p>Delete “${escapeHtml(deck.title)}” from your learning sets? Your practice history${deck.imported ? ' and Anki export are' : ' is'} kept.</p><div class="content-actions"><button class="primary danger-fill" data-confirm-delete-set="true">Delete set</button><button class="secondary" data-keep="true">Keep set</button></div></section>` : ''}</section>` : '';
-  app.innerHTML = chrome(`<section class="intro"><h1>Settings</h1></section><div class="settings-stack"><section class="settings-card"><h2 id="learning-set-label">Learning set</h2>${!decks.length ? '<p>No learning sets yet. Import an Anki file below.</p>' : ''}<div class="deck-options" role="radiogroup" aria-labelledby="learning-set-label">${decks.map(option => `<label class="deck-option ${option.id === deck?.id ? 'selected' : ''}"><input type="radio" name="learning-set" value="${escapeHtml(option.id)}" ${option.id === deck?.id ? 'checked' : ''}><span><strong>${escapeHtml(option.title)}</strong><small>${escapeHtml(langName(option.termLang))} → ${escapeHtml(langName(option.meaningLang))}${!option.imported ? ' · Default' : ''}</small></span></label>`).join('')}</div>${serverBacked && catalogCursor ? '<button class="text-button" data-catalog-more="true">Load more learning sets</button>' : ''}</section>${management}${serverBacked ? accountSettings() : ''}<section class="settings-card"><h2>Pronunciation</h2><label class="switch-row" for="auto-pronounce"><span><strong>Play after I answer</strong></span><input id="auto-pronounce" type="checkbox" role="switch" ${autoPronounce ? 'checked' : ''}></label>${storageAvailable ? '' : '<p class="storage-note">This choice lasts for this visit.</p>'}</section>${serverBacked ? importSettings() : ''}${serverBacked ? '' : '<p class="settings-footnote">Practice resets when this preview reloads.</p>'}</div>`, 'settings');
+  app.innerHTML = chrome(`<section class="intro"><h1>Settings</h1></section><div class="settings-stack"><section class="settings-card"><h2 id="learning-set-label">Learning set</h2>${!decks.length ? '<p>No learning sets yet. Import an Anki file below.</p>' : ''}<div class="deck-options" role="radiogroup" aria-labelledby="learning-set-label">${decks.map(option => `<label class="deck-option ${option.id === deck?.id ? 'selected' : ''}"><input type="radio" name="learning-set" value="${escapeHtml(option.id)}" ${option.id === deck?.id ? 'checked' : ''}><span><strong>${escapeHtml(option.title)}</strong><small>${escapeHtml(langName(option.termLang))} → ${escapeHtml(langName(option.meaningLang))}${!option.imported ? ' · Default' : ''}</small></span></label>`).join('')}</div>${serverBacked && catalogCursor ? '<button class="text-button" data-catalog-more="true">Load more learning sets</button>' : ''}</section>${management}${serverBacked ? accountSettings() + tokenSettings() : ''}<section class="settings-card"><h2>Pronunciation</h2><label class="switch-row" for="auto-pronounce"><span><strong>Play after I answer</strong></span><input id="auto-pronounce" type="checkbox" role="switch" ${autoPronounce ? 'checked' : ''}></label>${storageAvailable ? '' : '<p class="storage-note">This choice lasts for this visit.</p>'}</section>${serverBacked ? importSettings() : ''}${serverBacked ? '' : '<p class="settings-footnote">Practice resets when this preview reloads.</p>'}</div>`, 'settings');
 }
 
 function render() {
   clearTimeout(reviewTimer);
   if (!user || screen !== 'settings') clearPasswordForm();
+  if (!user || screen !== 'settings') clearTokenControls();
   if (serverBacked && (!accountLoaded || !user || !deckLoaded)) {
     accountView();
     updateControls();
@@ -1257,6 +1334,10 @@ app.addEventListener('click', event => {
       return;
     }
     if (failedOperation) return;
+    if (button.dataset.tokensOpen && user) { manageTokens('list'); return; }
+    if (button.dataset.tokensClose) { clearTokenControls(); render(); return; }
+    if (button.dataset.tokenDismiss) { createdToken = null; render(); return; }
+    if (button.dataset.tokenRevoke) { manageTokens('revoke', undefined, button.dataset.tokenRevoke); return; }
     if (button.dataset.changePassword && user) { clearPasswordForm(); passwordFormOpen = true; render(); app.querySelector('#current-password')?.focus(); return; }
     if (button.dataset.passwordCancel) { clearPasswordForm(); render(); app.querySelector('[data-change-password]')?.focus(); return; }
     if (button.dataset.editWord) { stopAudio(); editDraft = {term: selectedWord.term, meaning: selectedWord.meaning}; contentError = ''; render(); app.querySelector('[name=term]')?.focus(); return; }
@@ -1406,6 +1487,7 @@ app.addEventListener('click', event => {
 });
 
 app.addEventListener('submit', async event => {
+  if (event.target.id === 'token-form') { event.preventDefault(); manageTokens('create', event.target); return; }
   if (event.target.id === 'password-form') { event.preventDefault(); savePassword(event.target); return; }
   if (event.target.id === 'word-edit-form') { event.preventDefault(); mutateContent('word-edit', editDraft); return; }
   if (event.target.id === 'deck-rename-form') { event.preventDefault(); mutateContent('rename', {title: renameDraft}); return; }
@@ -1453,12 +1535,14 @@ window.addEventListener('pagehide', () => {
   clearTimeout(reviewTimer);
   stopAudio();
   clearPasswordForm();
+  clearTokenControls();
   const loginPassword = app.querySelector('#account-password');
   if (loginPassword) loginPassword.value = '';
 });
 window.addEventListener('pageshow', event => {
   if (event.persisted) {
     clearPasswordForm();
+    clearTokenControls();
     if (serverBacked && user && screen === 'study' && !busy && !failedOperation) refreshStudy();
     else render();
   }

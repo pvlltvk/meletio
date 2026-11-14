@@ -68,3 +68,4 @@ button,input,select,textarea,summary{font:inherit}button,select,input:not([type=
 @media(max-height:650px){.quiz-top{margin-bottom:16px}.quiz-image-wrap{height:130px}.prompt{padding:16px}.answers{margin-top:16px}.feedback{margin-top:16px}.continue{margin-top:12px}}
 
 #password-form{gap:8px}#password-form input{margin-bottom:8px}#password-form p{margin-top:0}#password-feedback:empty{display:none}.password-status{color:var(--green);font-size:14px;line-height:1.6;margin-block:16px}
+#created-token{display:block;width:100%;min-height:90px;margin-top:8px;padding:12px;border:1px solid var(--line);border-radius:9px;font:inherit;overflow-wrap:anywhere;resize:vertical}#created-token:focus-visible{outline:3px solid #5364d5;outline-offset:4px}[data-token-row] strong,[data-token-row] small{display:block;overflow-wrap:anywhere}[data-token-row]>span{min-width:0}
