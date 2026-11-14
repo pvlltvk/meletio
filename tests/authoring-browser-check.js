@@ -46,6 +46,21 @@ async (page, options = {}) => {
     await page.locator('[data-token-row]').filter({hasText: 'Book vocabulary'}).getByRole('button', {name: 'Revoke', exact: true}).click();
     await page.getByText('Book vocabulary', {exact: true}).waitFor({state: 'detached'});
     passed.push('Settings lists token metadata and revokes an individual token');
+
+    const nativeResponse = await context.request.post(new URL('/api/authoring/decks', url).href, {
+      headers: {Origin: new URL(url).origin}, data: {requestId: `native-${unique}`, title: `Native ${unique}`,
+        termLang: 'el', meaningLang: 'en', termDir: 'ltr', meaningDir: 'ltr'}
+    });
+    check(nativeResponse.status() === 201, 'Native set creation failed');
+    const native = (await nativeResponse.json()).deck;
+    await page.reload();
+    await page.getByRole('button', {name: 'Settings', exact: true}).click();
+    await page.locator(`[name="learning-set"][value="${native.id}"]`).check();
+    await page.getByRole('heading', {name: `Manage Native ${unique}`, exact: true}).waitFor();
+    check(await page.locator('[data-restore-media]').count() === 0, 'Native set exposed Anki media repair');
+    check(!(await page.locator('.deck-option.selected').innerText()).includes('Default'), 'Native set was labeled as a default');
+    check(await page.locator('[data-rename-set]').count() === 1, 'Native set lost existing management controls');
+    passed.push('Native sets appear in Settings with management controls and no Anki or default labels');
     return {passed};
   } finally { await context.close(); }
 };

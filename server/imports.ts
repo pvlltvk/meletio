@@ -5,7 +5,7 @@ import {join, relative, resolve, sep} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {transaction} from './database';
 import {ContentRepository} from './content';
-import {ApiError, fields, invalid, stringField} from './types';
+import {ApiError, fields, invalid, languageField, stringField} from './types';
 import {inspectPackageInChild} from './import-worker';
 import {extractField} from './import-html';
 
@@ -25,13 +25,6 @@ const active = "status IN ('uploading','inspecting','ready')";
 const reservation = importLimits.uploadBytes + importLimits.unpackedBytes + 16 * 1024 * 1024;
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const notFound = () => new ApiError(404, 'not_found', 'Import not found.');
-
-function language(value: unknown) {
-  const tag = stringField(value, 'language', 64);
-  if (!/^[A-Za-z]{2,8}(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|[0-9]{3}))?(?:-(?:[A-Za-z0-9]{5,8}|[0-9][A-Za-z0-9]{3}))*$/.test(tag)) invalid('Use a valid language tag.');
-  try { Intl.getCanonicalLocales(tag); } catch { invalid('Use a valid language tag.'); }
-  return tag;
-}
 
 function directorySize(path: string): number {
   try { return readdirSync(path, {withFileTypes: true}).reduce((size, file) => size + (file.isDirectory() ? directorySize(join(path, file.name)) : statSync(join(path, file.name)).size), 0); }
@@ -248,7 +241,7 @@ export class Imports {
     fields(values, ['term', 'meaning', 'image', 'audio']);
     if (typeof body.includeChildren !== 'boolean') invalid('Choose whether to include child decks.');
     if (!['ltr', 'rtl'].includes(String(body.termDir)) || !['ltr', 'rtl'].includes(String(body.meaningDir))) invalid('Invalid text direction.');
-    return {sourceDeckId: stringField(body.sourceDeckId, 'source deck'), noteTypeId: stringField(body.noteTypeId, 'note type'), includeChildren: body.includeChildren, mapping: {term: stringField(values.term, 'term field'), meaning: stringField(values.meaning, 'meaning field'), image: values.image == null ? null : stringField(values.image, 'image field'), audio: values.audio == null ? null : stringField(values.audio, 'audio field')}, termLang: language(body.termLang), meaningLang: language(body.meaningLang), termDir: String(body.termDir), meaningDir: String(body.meaningDir)};
+    return {sourceDeckId: stringField(body.sourceDeckId, 'source deck'), noteTypeId: stringField(body.noteTypeId, 'note type'), includeChildren: body.includeChildren, mapping: {term: stringField(values.term, 'term field'), meaning: stringField(values.meaning, 'meaning field'), image: values.image == null ? null : stringField(values.image, 'image field'), audio: values.audio == null ? null : stringField(values.audio, 'audio field')}, termLang: languageField(body.termLang), meaningLang: languageField(body.meaningLang), termDir: String(body.termDir), meaningDir: String(body.meaningDir)};
   }
 
   private matchingSource(userId: string, source: Source) {
@@ -264,13 +257,14 @@ export class Imports {
     const replaceLocalChanges = body.replaceLocalChanges === true && !repairMedia;
     const stage = this.owned(userId, id);
     const parsed = this.parsed(stage);
-    const source = this.source(body);
-    const title = stringField(body.title, 'learning set title', 120).trim();
-    if (!title) invalid('Enter a learning set title.');
     const destination = body.destinationDeckId == null ? null : stringField(body.destinationDeckId, 'destination');
     const target = destination ? this.db.prepare(`SELECT d.* FROM imported_decks d LEFT JOIN deck_overrides o ON o.deck_id = d.id
       WHERE d.id = ? AND d.owner_id = ? AND o.deleted_at IS NULL`).get(destination, userId) as ImportedDeck | undefined : null;
     if (destination && !target) throw notFound();
+    if (target && JSON.parse(target.source_json).kind === 'authored') throw new ApiError(400, 'invalid_destination', 'Anki imports cannot update authored learning sets.');
+    const source = this.source(body);
+    const title = stringField(body.title, 'learning set title', 120).trim();
+    if (!title) invalid('Enter a learning set title.');
     if (repairMedia && !target) invalid('Choose an existing learning set to restore missing media.');
     const identity = (value: Source) => ({...value, mapping: {term: value.mapping.term, meaning: value.mapping.meaning}});
     if (target && (repairMedia ? hash(identity(JSON.parse(target.source_json))) !== hash(identity(source)) : hash(JSON.parse(target.source_json)) !== hash(source))) throw new ApiError(409, 'mapping_changed', 'Use the same source deck, note type, fields and languages when updating this learning set.');
@@ -444,6 +438,7 @@ export class Imports {
     const response = transaction(this.db, () => {
       const existing = preview.destinationDeckId ? this.db.prepare(`SELECT d.* FROM imported_decks d LEFT JOIN deck_overrides o ON o.deck_id = d.id
         WHERE d.id = ? AND d.owner_id = ? AND o.deleted_at IS NULL`).get(preview.destinationDeckId, userId) as ImportedDeck | undefined : null;
+      if (existing && JSON.parse(existing.source_json).kind === 'authored') throw new ApiError(400, 'invalid_destination', 'Anki imports cannot update authored learning sets.');
       if ((preview.destinationDeckId && !existing) || (existing?.revision || 0) !== preview.expectedRevision) throw new ApiError(409, 'stale_preview', 'This learning set changed. Preview the package again.');
       if (!existing && this.matchingSource(userId, preview.source)) throw new ApiError(409, 'existing_import', 'This selection was imported before. Choose the existing learning set.');
       const deckId = existing?.id || randomUUID();

@@ -3,6 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {dirname, join, resolve} from 'node:path';
 import {Auth, sessionCookie} from './auth';
 import {AccessTokens} from './access-tokens';
+import {Authoring} from './authoring';
 import {AuthLimitError} from './auth-limits';
 import {openDatabase} from './database';
 import {Training} from './training';
@@ -106,6 +107,7 @@ export function createApplication(options: ApplicationOptions) {
   const auth = new Auth(db, now);
   const accessTokens = new AccessTokens(db, now);
   const content = new ContentRepository(db, options.content);
+  const authoring = new Authoring(db, content, now);
   const training = new Training(db, content, now);
   const contentMutations = new ContentMutations(db, content, now);
   const imports = new Imports(db, content, options.stagingRoot || join(dirname(options.databasePath), 'import-staging'), now);
@@ -143,9 +145,25 @@ export function createApplication(options: ApplicationOptions) {
         return;
       }
       if (!['GET', 'POST', 'HEAD'].includes(method)) throw new ApiError(405, 'method_not_allowed', 'Method not allowed.');
+      const cookie = request.headers.cookie;
+      if (path.startsWith('/api/authoring/')) {
+        const bearer = request.headers.authorization !== undefined;
+        const principal = () => bearer ? accessTokens.bearer(request.headers.authorization) : auth.user(cookie);
+        const user = principal();
+        if (method === 'POST' && request.headers.origin !== options.origin && (!bearer || request.headers.origin !== undefined)) throw new ApiError(403, 'invalid_origin', 'Request origin is not allowed.');
+        const expectedUser = request.headers['x-meletio-user'];
+        if (expectedUser !== undefined && expectedUser !== user.id) throw new ApiError(401, 'account_changed', 'Your account changed in another tab. Log in again to continue.');
+        const body = method === 'POST' ? await readBody(request) : {};
+        if (method === 'POST' && principal().id !== user.id) throw new ApiError(401, 'account_changed', 'Your account changed. Log in again.');
+        const deckMatch = /^\/api\/authoring\/decks\/([a-zA-Z0-9-]{1,128})$/.exec(path);
+        if (path === '/api/authoring/decks' && method === 'GET') json(response, 200, authoring.list(user.id, url.searchParams.get('cursor') ?? undefined));
+        else if (path === '/api/authoring/decks' && method === 'POST') json(response, 201, authoring.create(user.id, body));
+        else if (deckMatch && method === 'GET') json(response, 200, authoring.read(user.id, deckMatch[1]));
+        else throw new ApiError(404, 'not_found', 'Endpoint not found.');
+        return;
+      }
       if (request.headers.authorization !== undefined) throw new ApiError(401, 'unauthorized', 'Access tokens are only accepted by the authoring API.');
       if (method === 'POST' && request.headers.origin !== options.origin) throw new ApiError(403, 'invalid_origin', 'Request origin is not allowed.');
-      const cookie = request.headers.cookie;
       if (path === '/api/auth/config' && method === 'GET') {
         json(response, 200, {registrationOpen: registration === 'open'});
         return;

@@ -32,7 +32,7 @@ export class ContentMutations {
       if (!deck.editable) throw new ApiError(403, 'readonly_content', 'This learning set cannot be changed.');
       if (deck.revision !== body.revision) throw new ApiError(409, 'stale_content', 'This learning set changed. Reload it and try again.');
       const revision = deck.revision + 1;
-      if (deck.imported) {
+      if (deck.imported || deck.authored) {
         if (wordId) {
           const word = this.db.prepare(`SELECT w.id, w.term, w.meaning FROM imported_words w LEFT JOIN word_overrides o ON o.word_id = w.id
             WHERE w.id = ? AND w.deck_id = ? AND o.deleted_at IS NULL`).get(wordId, deckId) as {id: string; term: string; meaning: string} | undefined;
