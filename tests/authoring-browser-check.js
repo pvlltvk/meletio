@@ -5,20 +5,45 @@ async (page, options = {}) => {
   const passed = [];
   const check = (condition, message) => { if (!condition) throw new Error(message); };
   const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  let currentPassword = 'a synthetic authoring password';
   try {
     await page.goto(url);
     await page.locator('#account-form').waitFor();
     await page.locator('[data-account-mode]').click();
     await page.locator('#account-email').fill(`authoring-${unique}@example.com`);
-    await page.locator('#account-password').fill('a synthetic authoring password');
+    await page.locator('#account-password').fill(currentPassword);
     await page.locator('#account-form button[type=submit]').click();
     await page.getByRole('button', {name: 'Settings', exact: true}).click();
     await page.locator('[data-tokens-open]').click();
+    await page.locator('#token-name').fill('Wrong password');
+    await page.locator('#token-current-password').fill('incorrect confirmation password');
+    await page.locator('#token-form button[type=submit]').click();
+    await page.getByText('Current password is incorrect.', {exact: true}).waitFor();
+    check(await page.locator('#token-current-password').inputValue() === '', 'Rejected token creation retained the password');
+    check(await page.locator('#created-token').count() === 0, 'Wrong password created a displayed token');
+    check(await page.locator('[data-token-row]').count() === 0, 'Wrong password created token metadata');
+    passed.push('Token creation requires the current password and clears it after a rejection');
+
+    await page.locator('#token-current-password').fill(currentPassword);
+    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+    check(await page.locator('#token-current-password').inputValue() === '', 'Pagehide retained the token confirmation password');
+    await page.evaluate(() => {
+      const event = new Event('pageshow');
+      Object.defineProperty(event, 'persisted', {value: true});
+      window.dispatchEvent(event);
+    });
+    await page.locator('[data-tokens-open]').click();
+    check(await page.locator('#token-current-password').inputValue() === '', 'BFCache restored the token confirmation password');
+    passed.push('Token confirmation passwords clear on pagehide and cached restore');
+
     await page.locator('#token-name').fill('Book vocabulary');
+    await page.locator('#token-current-password').fill(currentPassword);
     await page.locator('#token-form button[type=submit]').click();
     await page.locator('#created-token').waitFor();
     const secret = await page.locator('#created-token').inputValue();
     check(secret.length >= 32, 'Token creation did not display a usable secret');
+    check(await page.locator('#token-current-password').inputValue() === '', 'Successful token creation retained the password');
+    check(await page.evaluate(value => !JSON.stringify(localStorage).includes(value) && !JSON.stringify(sessionStorage).includes(value), currentPassword), 'Token confirmation password was written to browser storage');
     check(await page.evaluate(value => !JSON.stringify(localStorage).includes(value) && !JSON.stringify(sessionStorage).includes(value), secret), 'Token was written to browser storage');
     await page.getByRole('button', {name: 'Vocabulary', exact: true}).click();
     check(await page.locator('#created-token').count() === 0, 'Navigation retained the token secret');
@@ -29,6 +54,7 @@ async (page, options = {}) => {
     passed.push('Settings creates a token once and navigation clears it without browser storage');
 
     await page.locator('#token-name').fill('Page lifecycle');
+    await page.locator('#token-current-password').fill(currentPassword);
     await page.locator('#token-form button[type=submit]').click();
     await page.locator('#created-token').waitFor();
     await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
@@ -71,6 +97,7 @@ async (page, options = {}) => {
       check(response.status() === 201, 'Lost-response fixture did not commit');
       await route.abort();
     }, {times: 1});
+    await page.locator('#token-current-password').fill(currentPassword);
     await page.locator('#token-form button[type=submit]').click();
     await page.getByText(/Token creation could not be confirmed/).waitFor();
     await page.waitForTimeout(100);
@@ -95,13 +122,15 @@ async (page, options = {}) => {
       await route.fulfill({response});
     }, {times: 1});
     await page.locator('#token-name').fill('Delayed old account');
+    await page.locator('#token-current-password').fill(currentPassword);
     await page.locator('#token-form button[type=submit]').click();
     await saved;
     await page.locator('[data-logout]').click();
     await page.locator('#account-form').waitFor();
     await page.locator('[data-account-mode]').click();
     await page.locator('#account-email').fill(`authoring-other-${unique}@example.com`);
-    await page.locator('#account-password').fill('another synthetic authoring password');
+    currentPassword = 'another synthetic authoring password';
+    await page.locator('#account-password').fill(currentPassword);
     await page.locator('#account-form button[type=submit]').click();
     await page.getByRole('button', {name: 'Settings', exact: true}).click();
     const delivered = page.waitForResponse(response => response.url().endsWith('/api/account/tokens') && response.request().method() === 'POST');
@@ -114,6 +143,7 @@ async (page, options = {}) => {
     passed.push('Delayed token responses are ignored after logout and account changes');
 
     await page.locator('#token-name').fill('Script workflow');
+    await page.locator('#token-current-password').fill(currentPassword);
     await page.locator('#token-form button[type=submit]').click();
     await page.locator('#created-token').waitFor();
     const workflowToken = await page.locator('#created-token').inputValue();

@@ -10,6 +10,7 @@ import {Training} from './training';
 import {ContentRepository} from './content';
 import {Imports} from './imports';
 import {IMPORT_LIMITS} from './import-types';
+import {MediaStorage, validateMediaLimits, type MediaLimits} from './media-storage';
 import {ContentMutations} from './content-mutations';
 import {ApiError, fields, invalid, stringField, type Content} from './types';
 
@@ -21,6 +22,7 @@ export interface ApplicationOptions {
   now?: () => number;
   stagingRoot?: string;
   registration?: 'open' | 'closed';
+  mediaLimits?: MediaLimits;
 }
 
 function mediaResponse(request: IncomingMessage, response: ServerResponse, media: {bytes: Uint8Array; mime: string; size: number} | undefined) {
@@ -143,15 +145,17 @@ export function createApplication(options: ApplicationOptions) {
   if (!['open', 'closed'].includes(registration)) throw new Error('REGISTRATION must be open or closed.');
   const origin = new URL(options.origin);
   if (!['http:', 'https:'].includes(origin.protocol) || origin.origin !== options.origin || origin.username || origin.password) throw new Error('APP_ORIGIN must be an HTTP(S) origin without a path.');
+  const mediaLimits = validateMediaLimits(options.mediaLimits);
   const db = openDatabase(options.databasePath);
   const now = options.now || Date.now;
   const auth = new Auth(db, now);
   const accessTokens = new AccessTokens(db, now);
   const content = new ContentRepository(db, options.content);
-  const authoring = new Authoring(db, content, now);
+  const mediaStorage = new MediaStorage(db, mediaLimits);
+  const authoring = new Authoring(db, content, now, mediaStorage);
   const training = new Training(db, content, now);
   const contentMutations = new ContentMutations(db, content, now);
-  const imports = new Imports(db, content, options.stagingRoot || join(dirname(options.databasePath), 'import-staging'), now);
+  const imports = new Imports(db, content, options.stagingRoot || join(dirname(options.databasePath), 'import-staging'), now, mediaStorage);
   const webRoot = resolve(__dirname, '../../web');
   const publicFiles: Record<string, [string, string]> = {
     '/': ['index.html', 'text/html; charset=utf-8'],
@@ -187,11 +191,11 @@ export function createApplication(options: ApplicationOptions) {
       }
       if (!['GET', 'POST', 'HEAD'].includes(method)) throw new ApiError(405, 'method_not_allowed', 'Method not allowed.');
       const cookie = request.headers.cookie;
+      const bearer = /^Bearer(?:\s|$)/i.test(request.headers.authorization || '');
       if (path.startsWith('/api/authoring/')) {
-        const bearer = request.headers.authorization !== undefined;
+        if (method === 'POST' && request.headers.origin !== options.origin && (!bearer || request.headers.origin !== undefined)) throw new ApiError(403, 'invalid_origin', 'Request origin is not allowed.');
         const principal = () => bearer ? accessTokens.bearer(request.headers.authorization) : auth.user(cookie);
         const user = principal();
-        if (method === 'POST' && request.headers.origin !== options.origin && (!bearer || request.headers.origin !== undefined)) throw new ApiError(403, 'invalid_origin', 'Request origin is not allowed.');
         const expectedUser = request.headers['x-meletio-user'];
         if (expectedUser !== undefined && expectedUser !== user.id) throw new ApiError(401, 'account_changed', 'Your account changed in another tab. Log in again to continue.');
         if (path === '/api/authoring/media' && method === 'POST') {
@@ -213,7 +217,7 @@ export function createApplication(options: ApplicationOptions) {
         else throw new ApiError(404, 'not_found', 'Endpoint not found.');
         return;
       }
-      if (request.headers.authorization !== undefined) throw new ApiError(401, 'unauthorized', 'Access tokens are only accepted by the authoring API.');
+      if (bearer) throw new ApiError(401, 'unauthorized', 'Access tokens are only accepted by the authoring API.');
       if (method === 'POST' && request.headers.origin !== options.origin) throw new ApiError(403, 'invalid_origin', 'Request origin is not allowed.');
       if (path === '/api/auth/config' && method === 'GET') {
         json(response, 200, {registrationOpen: registration === 'open'});
@@ -252,7 +256,7 @@ export function createApplication(options: ApplicationOptions) {
         return;
       }
       if (path === '/api/account/tokens' && method === 'POST') {
-        json(response, 201, accessTokens.create(user.id, body));
+        json(response, 201, await auth.createAccessToken(body, cookie, request.socket.remoteAddress || 'unknown', accessTokens));
         return;
       }
       const tokenMatch = /^\/api\/account\/tokens\/([a-zA-Z0-9-]{1,128})\/revoke$/.exec(path);

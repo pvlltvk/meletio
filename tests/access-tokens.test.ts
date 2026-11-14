@@ -53,7 +53,7 @@ test('named access tokens are one-time secrets, owner scoped, hashed, and revoca
     const other = await f.register('other@example.com');
     assert.equal((await f.request('/api/account/tokens')).response.status, 401);
 
-    const created = await f.request('/api/account/tokens', {cookie: owner.cookie, body: {name: 'book importer'}});
+    const created = await f.request('/api/account/tokens', {cookie: owner.cookie, body: {name: 'book importer', currentPassword: password}});
     assert.equal(created.response.status, 201, created.text);
     assert.equal(created.body.name, 'book importer');
     assert.equal(created.body.createdAt, 1_700_000_000_000);
@@ -61,6 +61,7 @@ test('named access tokens are one-time secrets, owner scoped, hashed, and revoca
     assert.equal(typeof created.body.id, 'string');
     assert.equal(typeof created.body.token, 'string');
     assert(created.body.token.length >= 32);
+    assert.match(created.body.token, /^mlt_[a-f0-9]{64}$/);
 
     const listed = await f.request('/api/account/tokens', {cookie: owner.cookie});
     assert.equal(listed.response.status, 200, listed.text);
@@ -82,13 +83,14 @@ test('named access tokens are one-time secrets, owner scoped, hashed, and revoca
 
     const foreignRevoke = await f.request(`/api/account/tokens/${encodeURIComponent(created.body.id)}/revoke`, {cookie: other.cookie, body: {}});
     assert.equal(foreignRevoke.response.status, 200, foreignRevoke.text);
+    assert.deepEqual(foreignRevoke.body, {revoked: false});
     assert.equal((await f.request('/api/account/tokens', {cookie: owner.cookie})).body.tokens.length, 1);
     const revoke = await f.request(`/api/account/tokens/${encodeURIComponent(created.body.id)}/revoke`, {cookie: owner.cookie, body: {}});
     assert.equal(revoke.response.status, 200, revoke.text);
     assert.deepEqual(revoke.body, {revoked: true});
     const replay = await f.request(`/api/account/tokens/${encodeURIComponent(created.body.id)}/revoke`, {cookie: owner.cookie, body: {}});
     assert.equal(replay.response.status, 200, replay.text);
-    assert.deepEqual(replay.body, {revoked: true});
+    assert.deepEqual(replay.body, {revoked: false});
     assert.deepEqual((await f.request('/api/account/tokens', {cookie: owner.cookie})).body.tokens, []);
   } finally { await f.close(); }
 });
@@ -97,7 +99,7 @@ test('token routes retain session Origin and account guards, expiry, and active-
   const f = await fixture();
   try {
     const owner = await f.register('guard@example.com');
-    const missingOrigin = await f.request('/api/account/tokens', {cookie: owner.cookie, headers: {Origin: 'https://evil.example'}, body: {name: 'blocked'}});
+    const missingOrigin = await f.request('/api/account/tokens', {cookie: owner.cookie, headers: {Origin: 'https://evil.example'}, body: {name: 'blocked', currentPassword: password}});
     assert.equal(missingOrigin.response.status, 403, missingOrigin.text);
     const wrongAccount = await f.request('/api/account/tokens', {cookie: owner.cookie, headers: {'X-Meletio-User': 'other-user'}, body: {name: 'blocked'}});
     assert.equal(wrongAccount.response.status, 401, wrongAccount.text);
@@ -105,10 +107,10 @@ test('token routes retain session Origin and account guards, expiry, and active-
     assert.equal(invalid.response.status, 400, invalid.text);
 
     for (let index = 0; index < 20; index++) {
-      const result = await f.request('/api/account/tokens', {cookie: owner.cookie, body: {name: `token ${index}`}});
+      const result = await f.request('/api/account/tokens', {cookie: owner.cookie, body: {name: `token ${index}`, currentPassword: password}});
       assert.equal(result.response.status, 201, result.text);
     }
-    const capped = await f.request('/api/account/tokens', {cookie: owner.cookie, body: {name: 'over limit'}});
+    const capped = await f.request('/api/account/tokens', {cookie: owner.cookie, body: {name: 'over limit', currentPassword: password}});
     assert.notEqual(capped.response.status, 201, capped.text);
     assert.equal((await f.request('/api/account/tokens', {cookie: owner.cookie})).body.tokens.length, 20);
 
@@ -117,7 +119,7 @@ test('token routes retain session Origin and account guards, expiry, and active-
     assert.equal(renewed.response.status, 200, renewed.text);
     const cookie = renewed.response.headers.get('set-cookie')!.split(';')[0];
     assert.deepEqual((await f.request('/api/account/tokens', {cookie})).body.tokens, []);
-    const afterExpiry = await f.request('/api/account/tokens', {cookie, body: {name: 'replacement'}});
+    const afterExpiry = await f.request('/api/account/tokens', {cookie, body: {name: 'replacement', currentPassword: password}});
     assert.equal(afterExpiry.response.status, 201, afterExpiry.text);
   } finally { await f.close(); }
 });
@@ -126,7 +128,7 @@ test('password change revokes personal tokens while logout preserves them', asyn
   const f = await fixture();
   try {
     const owner = await f.register('owner@example.com');
-    const created = await f.request('/api/account/tokens', {cookie: owner.cookie, body: {name: 'automation'}});
+    const created = await f.request('/api/account/tokens', {cookie: owner.cookie, body: {name: 'automation', currentPassword: password}});
     assert.equal(created.response.status, 201, created.text);
     const logout = await f.request('/api/auth/logout', {cookie: owner.cookie, body: {}});
     assert.equal(logout.response.status, 200, logout.text);
@@ -145,7 +147,7 @@ test('personal bearer tokens do not authorize account, training, or import APIs'
   const f = await fixture();
   try {
     const owner = await f.register('owner@example.com');
-    const created = await f.request('/api/account/tokens', {cookie: owner.cookie, body: {name: 'automation'}});
+    const created = await f.request('/api/account/tokens', {cookie: owner.cookie, body: {name: 'automation', currentPassword: password}});
     assert.equal(created.response.status, 201, created.text);
     const bearer = {Authorization: `Bearer ${created.body.token}`};
     assert.equal((await f.request('/api/auth/me', {headers: bearer})).response.status, 401);

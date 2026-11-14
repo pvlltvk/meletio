@@ -57,7 +57,7 @@ async function fixture(options: Options = {}) {
     return {cookie: result.response.headers.get('set-cookie')!.split(';')[0], user: result.body.user};
   }
   async function createToken(cookie: string, name = 'media uploader') {
-    const result = await request('/api/account/tokens', {cookie, body: {name}});
+    const result = await request('/api/account/tokens', {cookie, body: {name, currentPassword: password}});
     assert.equal(result.response.status, 201, result.text);
     return result.body as {id: string; token: string};
   }
@@ -189,7 +189,7 @@ test('media upload validates signatures and limits and attachments reject wrong-
       'oversized-image-1', 'large.png', token.token);
     assert.equal(oversized.response.status, 413, oversized.bytes.toString());
     const unauthorized = await f.upload(samples()[0].bytes, 'anonymous-media-1', 'image.png');
-    assert.equal(unauthorized.response.status, 401, unauthorized.bytes.toString());
+    assert.equal(unauthorized.response.status, 403, unauthorized.bytes.toString());
     const wrongOrigin = await f.upload(samples()[0].bytes, 'foreign-origin-media-1', 'image.png', token.token, 'https://attacker.example');
     assert.equal(wrongOrigin.response.status, 403, wrongOrigin.bytes.toString());
     assert.equal(count(), before);

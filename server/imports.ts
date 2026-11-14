@@ -5,6 +5,7 @@ import {join, relative, resolve, sep} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {transaction} from './database';
 import {ContentRepository} from './content';
+import {MediaStorage} from './media-storage';
 import {ApiError, fields, invalid, languageField, stringField} from './types';
 import {inspectPackageInChild} from './import-worker';
 import {extractField} from './import-html';
@@ -37,7 +38,7 @@ export class Imports {
   private closed = false;
   private timer: ReturnType<typeof setInterval>;
 
-  constructor(private db: DatabaseSync, private content: ContentRepository, private root: string, private now: () => number) {
+  constructor(private db: DatabaseSync, private content: ContentRepository, private root: string, private now: () => number, private mediaStorage = new MediaStorage(db)) {
     mkdirSync(root, {recursive: true, mode: 0o700});
     // An interrupted process cannot still own its uploads or parser children.
     db.prepare("UPDATE import_stages SET status = 'failed', error = 'Upload interrupted. Try again.' WHERE status IN ('uploading','inspecting')").run();
@@ -450,9 +451,7 @@ export class Imports {
         const found = this.db.prepare('SELECT id FROM imported_media WHERE owner_id = ? AND sha256 = ? AND mime = ?').get(userId, media.sha256!, media.mime!) as {id: string} | undefined;
         if (found) return found.id;
         const value = this.mediaBytes(stage, media);
-        const mediaId = randomUUID();
-        this.db.prepare('INSERT INTO imported_media VALUES (?, ?, ?, ?, ?, ?)').run(mediaId, userId, media.sha256!, value.mime, value.size, value.bytes);
-        return mediaId;
+        return this.mediaStorage.store(userId, media.sha256!, value.mime, value.bytes);
       };
       let order = Number((this.db.prepare('SELECT MAX(sort_order) AS last FROM imported_words WHERE deck_id = ?').get(deckId) as {last: number | null}).last ?? -1) + 1;
       for (const note of preview.candidates) {

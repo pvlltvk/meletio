@@ -24,6 +24,7 @@ and recordings from scripts and agents. See the [API reference](api.md).
   scoped to one account. The browser session cookie and Origin check do not suit
   non-browser clients.
 - Uploads keep the media limits and file-signature checks used by the Anki import.
+  Shared account byte/count quotas apply to API uploads and Anki imports.
 - Writes are idempotent by request ID, so a retried call does not duplicate words.
 
 ## Planned

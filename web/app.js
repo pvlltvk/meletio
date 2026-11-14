@@ -279,6 +279,7 @@ function clearPasswordForm() {
 
 function clearTokenControls() {
   tokenRevision++;
+  app.querySelector('#token-form')?.reset();
   app.querySelector('#created-token')?.remove();
   tokenPanelOpen = false;
   accessTokens = [];
@@ -291,7 +292,7 @@ function clearTokenControls() {
 function tokenSettings() {
   const feedback = tokenFeedback ? `<p role="${tokenFailed ? 'alert' : 'status'}" class="${tokenFailed ? 'account-error' : ''}">${escapeHtml(tokenFeedback)}</p>` : '';
   const secret = createdToken ? `<label for="created-token">New access token</label><textarea id="created-token" readonly autocomplete="off" spellcheck="false">${escapeHtml(createdToken.token)}</textarea><p>Copy this token now. It will not be shown again.</p><button class="text-button" data-token-dismiss="true">Dismiss token</button>` : '';
-  const panel = tokenPanelOpen ? `<div id="token-controls">${feedback}${secret}<form id="token-form" class="content-form"><label for="token-name">Token name</label><input id="token-name" name="name" maxlength="120" autocomplete="off" required><button class="secondary" type="submit">Create token</button></form><div>${accessTokens.map(value => `<div class="switch-row" data-token-row="${escapeHtml(value.id)}"><span><strong>${escapeHtml(value.name)}</strong><small>Expires ${escapeHtml(new Date(value.expiresAt).toLocaleDateString())}</small></span><button class="text-button" data-token-revoke="${escapeHtml(value.id)}">Revoke</button></div>`).join('')}</div><button class="text-button" data-tokens-close="true">Close token controls</button></div>` : '<button class="secondary" data-tokens-open="true">Manage access tokens</button>';
+  const panel = tokenPanelOpen ? `<div id="token-controls">${feedback}${secret}<form id="token-form" class="content-form"><label for="token-name">Token name</label><input id="token-name" name="name" maxlength="120" autocomplete="off" required><label for="token-current-password">Current password</label><input id="token-current-password" name="currentPassword" type="password" autocomplete="current-password" minlength="12" maxlength="256" required><button class="secondary" type="submit">Create token</button></form><div>${accessTokens.map(value => `<div class="switch-row" data-token-row="${escapeHtml(value.id)}"><span><strong>${escapeHtml(value.name)}</strong><small>Expires ${escapeHtml(new Date(value.expiresAt).toLocaleDateString())}</small></span><button class="text-button" data-token-revoke="${escapeHtml(value.id)}">Revoke</button></div>`).join('')}</div><button class="text-button" data-tokens-close="true">Close token controls</button></div>` : '<button class="secondary" data-tokens-open="true">Manage access tokens</button>';
   return `<section class="settings-card" aria-labelledby="access-token-title"><h2 id="access-token-title">Access tokens</h2><p>Let scripts add vocabulary to your account. Tokens expire after 90 days. Changing your password revokes all tokens.</p>${panel}</section>`;
 }
 
@@ -300,6 +301,7 @@ async function manageTokens(action, form, id) {
   const current = generation;
   const revision = ++tokenRevision;
   const name = form?.elements.name.value;
+  const currentPassword = form?.elements.currentPassword.value;
   form?.reset();
   createdToken = null;
   tokenPanelOpen = true;
@@ -309,16 +311,16 @@ async function manageTokens(action, form, id) {
   render();
   try {
     if (action === 'create') {
-      const result = await request('/api/account/tokens', {name});
+      const result = await request('/api/account/tokens', {name, currentPassword});
       if (current !== generation || revision !== tokenRevision) return;
       createdToken = result;
       accessTokens = [...accessTokens, {id: result.id, name: result.name, createdAt: result.createdAt, expiresAt: result.expiresAt}];
       tokenFeedback = 'Token created.';
     } else if (action === 'revoke') {
-      await request(`/api/account/tokens/${encodeURIComponent(id)}/revoke`, {});
+      const result = await request(`/api/account/tokens/${encodeURIComponent(id)}/revoke`, {});
       if (current !== generation || revision !== tokenRevision) return;
       accessTokens = accessTokens.filter(value => value.id !== id);
-      tokenFeedback = 'Token revoked.';
+      tokenFeedback = result.revoked ? 'Token revoked.' : 'Token already inactive.';
     } else {
       const result = await request('/api/account/tokens');
       if (current !== generation || revision !== tokenRevision) return;

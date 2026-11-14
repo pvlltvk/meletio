@@ -137,7 +137,7 @@ async function main() {
     for (const field of ['new', 'due', 'nextDue', 'lessonSize']) assert.equal(reviewAfter[field], reviewBefore[field]);
     console.log('PASS: lesson snapshot, saved feedback, review dates and answer replay survive a real process restart');
 
-    const access = await request('/api/account/tokens', {name: 'Restart authoring'});
+    const access = await request('/api/account/tokens', {name: 'Restart authoring', currentPassword: 'a replaced process password'});
     async function author(path, body) {
       const response = await fetch(origin + path, {method: body === undefined ? 'GET' : 'POST',
         headers: {Authorization: `Bearer ${access.token}`, ...(body === undefined ? {} : {'Content-Type': 'application/json'})},

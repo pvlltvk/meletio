@@ -85,9 +85,9 @@ test context; this is not pronunciation or demo content.
 
 ## Author vocabulary from scripts
 
-In Settings, choose **Manage access tokens**, name a token and copy its secret
-when it is created. Scripts can create private learning sets, add or update words
-in batches, and upload pictures and human recordings without an Anki export.
+In Settings, choose **Manage access tokens**, name a token, confirm your current
+password and copy its secret when it is created. Scripts can create private
+learning sets, add or update words in batches, and upload pictures and human recordings without an Anki export.
 See the [authoring API reference and examples](docs/api.md).
 
 Tokens expire after 90 days and can be revoked in Settings. Changing your password
@@ -198,6 +198,15 @@ Keep backups, logs, browser captures and any credentials outside this repository
 | `APP_ORIGIN` | `http://HOST:PORT` | Exact browser origin allowed to make changes |
 | `SECURE_COOKIES` | `false` | Set `true` when serving through HTTPS |
 | `REGISTRATION` | `closed` | Allow new accounts only when explicitly set to `open` |
+| `MEDIA_MAX_BYTES` | `536870912` | Maximum stored media bytes per account (512 MiB) |
+| `MEDIA_MAX_FILES` | `10000` | Maximum unique stored media files per account |
+
+Both media limits must be positive safe integers. They apply jointly to API
+uploads and Anki imports and include retained historical and unattached media.
+Existing media remain readable if a lowered limit puts an account over quota.
+Replay and duplicate uploads still work; new files receive `422 storage_limit`.
+An import that exceeds quota rolls back its complete commit. Raising a limit
+requires restarting with the new configuration; no media is deleted automatically.
 
 Back up while the app is running with an explicit new file outside the project:
 

@@ -93,18 +93,22 @@ or live vocabulary mutation in this procedure.
 
 ## Coverage and recorded results
 
-The current automated baseline passes 161 Node tests and 66 browser groups
+The current automated baseline passes 174 Node tests and 68 browser groups
 (portable8, account/training9, import7, media3, polish6, recovery2, follow-up6,
-account management8, lessons6, selection4, authoring7).
+account management8, lessons6, selection4, authoring9).
 The source-only install/build and process-restart checks also pass.
 
 Coverage includes:
 
-- Authoring-only personal tokens, 90-day expiry, revocation/password changes,
-  bearer precedence, cookie/account guards and secret lifecycle/race handling.
+- Authoring-only personal tokens, password-confirmed issuance with credential/
+  session race guards and shared hashing/failure limits, 90-day expiry, precise
+  revocation results, Basic/Bearer routing and password/secret lifecycle handling.
 - Native-set filtering before pagination, 100-word atomic batches, stale writers,
   the 2,000-word and 1 MiB limits, deleted IDs, effective browser/API edits and
   unchanged historical lesson/review behavior.
+- Shared per-owner media byte/count admission across API and Anki, transactional
+  import rollback, last-slot contention, dedup/replay/reads at or above quota, and
+  invalid option/environment validation before data creation.
 - Private binary uploads, all supported signatures, exact 512 KiB boundary,
   media kinds/ownership, deduplication, filename/content replay across restart,
   interrupted/revoked/expired/slow streams and HTTP range reads.

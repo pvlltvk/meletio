@@ -33,19 +33,26 @@ Origin checks run before streaming. The app binds loopback unless configured.
 
 Schema6 adds personal access tokens with separate metadata IDs and SHA-256 secret
 hashes. The current account's Settings controls create a token once, list only
-active metadata and revoke individual tokens. Tokens expire after90days, with
+active metadata and revoke individual tokens. Minting requires the current password
+under the existing credential admission/failure/hash limits; session and verified
+password version are rechecked inside the token-insertion transaction. No password
+fingerprint or replay receipt is stored. Revocation returns whether an owned row
+was actually removed, with false for unknown/foreign/already-removed IDs. Tokens expire after90days, with
 at most20active/account. Password changes revoke them inside the existing guarded
 transaction; ordinary logout retains them. The UI clears displayed secrets on
 navigation, account changes, pagehide and cached pageshow, and ignores responses
 from invalidated forms. No plaintext token response is stored as a receipt.
 
-Dedicated /api/authoring routes select bearer authentication when Authorization
-is present, otherwise the existing cookie session. Invalid bearer credentials
+Dedicated /api/authoring routes select token authentication only for the Bearer
+scheme; other Authorization schemes use the existing cookie session. The scheme
+is case insensitive while the issued secret format is exact lowercase. Invalid bearer credentials
 never fall back. Cookie writes require exact Origin; bearer writes permit an
-absent Origin but reject a foreign one. The cached-account header is checked
+absent Origin but reject a foreign one. Authoring Origin checks precede principal
+authentication so anonymous unsafe-Origin writes also receive403. The cached-account header is checked
 against the selected principal. Authentication precedes body consumption and is
 checked again after reading a write body, before synchronous persistence.
-Bearer credentials are rejected outside the authoring namespace.
+Bearer credentials are rejected outside the authoring namespace. Basic and other
+proxy-owned Authorization headers do not block ordinary cookie authentication.
 
 Native sets reuse imported_decks/imported_words/imported_media with an explicit
 source_json kind marker. Effective metadata has authored:true/imported:false,
@@ -66,8 +73,14 @@ and signature checks. There is no image processing in the HTTP process; larger
 pictures must be resized by the caller. Signature checks do not establish codec
 validity. Immutable media deduplication and content receipts share a transaction;
 wrong-owner/wrong-kind attachments fail. Existing owner media responses provide
-GET/HEAD/ranges through the dedicated authoring namespace. No remote fetching,
-retention policy or deployment hardening is introduced. See [API](api.md).
+GET/HEAD/ranges through the dedicated authoring namespace. Shared MediaStorage enforces512MiB/10000unique BLOBs per account by default,
+configurable with MEDIA_MAX_BYTES/MEDIA_MAX_FILES validated before database creation.
+Both authoring uploads and Anki commits check aggregate retained bytes/count inside
+their existing transactions after replay/dedup, before new insertion. All historical
+and unattached media count. Quota failure422 rolls back media, metadata and receipts;
+existing reads and dedup/replay still work when limits are reduced below usage.
+There is no automatic purge. No remote fetching, retention cleanup or deployment
+hardening is introduced. See [API](api.md).
 
 ## Private Anki import
 

@@ -4,6 +4,7 @@ import {ContentRepository} from './content';
 import {transaction} from './database';
 import {IMPORT_LIMITS} from './import-types';
 import {sniffMedia} from './media-types';
+import {MediaStorage} from './media-storage';
 import {ApiError, fields, invalid, languageField, stringField} from './types';
 
 function canonical(value: unknown, depth = 0): unknown {
@@ -17,7 +18,7 @@ function canonical(value: unknown, depth = 0): unknown {
 interface StoredWord {id: string; image_media_id: string | null; audio_media_id: string | null}
 
 export class Authoring {
-  constructor(private db: DatabaseSync, private content: ContentRepository, private now: () => number) {}
+  constructor(private db: DatabaseSync, private content: ContentRepository, private now: () => number, private mediaStorage = new MediaStorage(db)) {}
 
   list(userId: string, cursor?: string) {
     return this.content.list(userId, cursor, true);
@@ -69,10 +70,7 @@ export class Authoring {
       if (bytes.length > IMPORT_LIMITS.mediaBytes) throw new ApiError(413, 'body_too_large', 'Media exceeds the 512 KiB limit.');
       const mime = sniffMedia(bytes, filename);
       if (!mime) throw new ApiError(415, 'unsupported_media', 'Unsupported media type or invalid file signature.');
-      const existing = this.db.prepare('SELECT id FROM imported_media WHERE owner_id = ? AND sha256 = ? AND mime = ?')
-        .get(userId, sha256, mime) as {id: string} | undefined;
-      const id = existing?.id || randomUUID();
-      if (!existing) this.db.prepare('INSERT INTO imported_media VALUES (?,?,?,?,?,?)').run(id, userId, sha256, mime, bytes.length, bytes);
+      const id = this.mediaStorage.store(userId, sha256, mime, bytes);
       return {id, kind: mime.startsWith('image/') ? 'image' : 'audio', mime, size: bytes.length};
     });
   }

@@ -10,9 +10,9 @@ a separate roadmap milestone.
 
 ## Access tokens
 
-Log in and open **Settings → Manage access tokens**. Give the token a name and
-choose **Create token**. Copy the secret immediately: it is displayed once and
-cleared on navigation. Listing tokens returns metadata, never their secrets.
+Log in and open **Settings → Manage access tokens**. Give the token a name,
+confirm your current password, and choose **Create token**. Copy the secret
+immediately: it is displayed once and cleared on navigation. Listing tokens returns metadata, never their secrets.
 If creation has an uncertain result, reopen the controls, revoke the named token
 if it exists, and create another. Creation is never automatically retried.
 
@@ -27,10 +27,18 @@ results APIs. Tokens are stored as SHA-256 hashes, with a separate public ID.
 The server does not accept tokens in query strings.
 
 Non-browser bearer requests may omit `Origin`. A supplied foreign Origin is
-rejected on writes. A supplied Authorization header always selects token
-authentication; an invalid token never falls back to a browser cookie. A valid
-token selects its account even if an unrelated cookie is present. The optional
+rejected on writes before authentication. Only the Bearer authorization scheme
+selects token authentication; an invalid or malformed Bearer token never falls
+back to a browser cookie. Scheme names are case insensitive; token secrets must
+match the issued lowercase format exactly. A valid token selects its account
+even if an unrelated cookie is present. The optional
 `X-Meletio-User` header must match that selected account.
+
+Other Authorization schemes, including a proxy's forwarded Basic credentials,
+are ignored by application authentication and use the ordinary session cookie.
+This permits cookie clients behind such a proxy; it does not configure proxy
+authentication for scripts, which need a compatible Bearer route or separate
+proxy gate.
 
 The same authoring endpoints accept browser session cookies. Cookie writes
 require the exact configured Origin and retain the existing account-header
@@ -114,6 +122,9 @@ revision and ID; receipt replay is checked before current revision validation.
 - Title: 120 Unicode code points. Term/meaning: 2,000 each.
 - Other JSON requests: 16 KiB. JSON bodies have a 15-second deadline.
 - Each upload: at most 512 KiB and a 15-second deadline. Resize larger pictures before upload.
+- Stored media per account: 512 MiB and 10,000 unique files by default, shared
+  across API uploads and Anki imports. `MEDIA_MAX_BYTES` and `MEDIA_MAX_FILES`
+  configure positive-safe-integer limits on the server.
 - Images: PNG, JPEG and WebP. Audio: MP3, WAV, Ogg and M4A/MP4 audio.
 
 Send the original filename, including a supported extension, in
@@ -129,6 +140,14 @@ or receipts. Uploaded media are immutable and deduplicated within an account.
 Removing a current reference retains bytes for saved historical attempts.
 Unattached media and old receipts follow the current retention behavior; they
 are not automatically purged.
+
+Media admission counts all retained BLOBs for the account, including imported,
+historical and unattached files. New distinct media that exceed either limit
+return `422 storage_limit`, with no saved media or success receipt. A failing
+Anki commit rolls back all its changes. Existing content remains readable;
+receipt replay and same-account deduplication succeed even at or above quota.
+Quota does not delete media or bound all database tables; receipt/history retention
+remains a separate roadmap item.
 
 ## Example workflow
 
@@ -213,9 +232,19 @@ Settings uses the cookie-only account API:
 | Method | Path | Input/result |
 | --- | --- | --- |
 | GET | `/api/account/tokens` | `{tokens:[{id,name,createdAt,expiresAt}]}`; active tokens only |
-| POST | `/api/account/tokens` | `{name}` → `{id,name,createdAt,expiresAt,token}`; HTTP 201 |
-| POST | `/api/account/tokens/:id/revoke` | `{}` → `{revoked:true}`; idempotent and owner scoped |
+| POST | `/api/account/tokens` | `{name,currentPassword}` → `{id,name,createdAt,expiresAt,token}`; HTTP 201 |
+| POST | `/api/account/tokens/:id/revoke` | `{}` → `{revoked:boolean}`; HTTP 200, owner scoped |
 
 Token creation has no request receipt, to avoid retaining the plaintext secret.
+It verifies the current password with the existing credential failure and
+concurrency limits, then rechecks the session and password version atomically
+with issuance. Missing confirmation returns 400; an incorrect password returns
+403 without ending the session. Password inputs clear after submission and
+navigation and are never saved in browser storage or mutation receipts.
+
+Revocation returns true only when this request deletes a token owned by the
+current account. Unknown, foreign and already-revoked IDs return false, without
+disclosing which case occurred. Repeating a revocation leaves the same inactive
+state, although the boolean changes from true to false after a successful delete.
 Dates are Unix milliseconds. This API has no deletion/purge of stored history,
 email recovery or grant to another account.

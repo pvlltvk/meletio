@@ -16,11 +16,12 @@ export class AccessTokens {
       FROM access_tokens WHERE owner_id = ? AND expires_at > ? ORDER BY created_at, id`).all(userId, this.now()) as unknown as TokenMetadata[];
   }
 
-  create(userId: string, body: Record<string, unknown>): TokenMetadata & {token: string} {
+  create(userId: string, body: Record<string, unknown>, verify?: () => void): TokenMetadata & {token: string} {
     fields(body, ['name']);
     const name = stringField(body.name, 'token name', 240).trim();
     if (!name || [...name].length > 120) invalid('Invalid token name.');
     return transaction(this.db, () => {
+      verify?.();
       const createdAt = this.now();
       this.db.prepare('DELETE FROM access_tokens WHERE owner_id = ? AND expires_at <= ?').run(userId, createdAt);
       const count = this.db.prepare('SELECT count(*) AS n FROM access_tokens WHERE owner_id = ?').get(userId) as {n: number};
@@ -33,16 +34,16 @@ export class AccessTokens {
     });
   }
 
-  revoke(userId: string, id: string): {revoked: true} {
-    this.db.prepare('DELETE FROM access_tokens WHERE owner_id = ? AND id = ?').run(userId, id);
-    return {revoked: true};
+  revoke(userId: string, id: string): {revoked: boolean} {
+    const result = this.db.prepare('DELETE FROM access_tokens WHERE owner_id = ? AND id = ?').run(userId, id);
+    return {revoked: result.changes > 0};
   }
 
   bearer(authorization?: string): User {
-    const match = /^Bearer (mlt_[a-f0-9]{64})$/i.exec(authorization || '');
-    const row = match && this.db.prepare(`SELECT users.id, users.email FROM access_tokens
+    const match = /^([A-Za-z]+) (mlt_[a-f0-9]{64})$/.exec(authorization || '');
+    const row = match && match[1].toLowerCase() === 'bearer' && this.db.prepare(`SELECT users.id, users.email FROM access_tokens
       JOIN users ON users.id = access_tokens.owner_id WHERE token_hash = ? AND expires_at > ?`)
-      .get(hashToken(match[1]), this.now()) as User | undefined;
+      .get(hashToken(match[2]), this.now()) as User | undefined;
     if (!row) throw new ApiError(401, 'unauthorized', 'Use a valid authoring access token.');
     return {id: row.id, email: row.email};
   }

@@ -44,7 +44,7 @@ async function fixture(options: {now?: () => number} = {}) {
     return {cookie: result.response.headers.get('set-cookie')!.split(';')[0], user: result.body.user};
   }
   async function createToken(cookie: string, name = 'authoring fixture') {
-    const result = await request('/api/account/tokens', {cookie, body: {name}});
+    const result = await request('/api/account/tokens', {cookie, body: {name, currentPassword: password}});
     assert.equal(result.response.status, 201, result.text);
     return result.body as {id: string; token: string};
   }
