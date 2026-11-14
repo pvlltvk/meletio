@@ -22,14 +22,34 @@ no recordings. Human pronunciation remains optional; no speech is synthesized.
 
 ## Next product milestones
 
-1. Check Anki import/file picking and audio on real iPhones/Safari, plus VoiceOver.
-2. Define email recovery and account lifecycle policies before hosted use;
-   password changes, session revocation and closed registration are implemented.
-3. Evaluate short due-first lessons and independent word review on real devices;
-   snapshot/receipt/media retention remains a separate decision.
-4. Define offline downloads, synchronization and conflict semantics.
-5. Consider HTTPS/VPS deployment after production security and operational review.
-6. Evaluate iOS/Android packaging after the PWA meets real needs.
+Reordered after the 2026-11-14 project review: authoring, recall and hosting come
+before further import or account work.
+
+1. Authoring API for scripts and AI agents: create learning sets, add or update
+   words in batches, and upload a picture and recording per word, so vocabulary
+   no longer depends on Anki desktop. Needs personal access tokens created and
+   revoked in Settings, because the browser session cookie and Origin check do
+   not suit non-browser clients; tokens are stored hashed and scoped to one
+   account. Uploads keep the import media limits and signature checks; writes
+   stay idempotent by request ID. Documented in `docs/api.md` with examples.
+2. Create sets and add words inside the app, using the same endpoints.
+3. Add a recall exercise (typed answer or reveal and self-grade) alongside
+   multiple choice.
+4. Make VPS hosting a supported path: container image, reverse-proxy example with
+   HTTPS, an opt-in trusted-proxy client address for the login limits, Secure
+   cookies derived from an https `APP_ORIGIN`, a Content-Security-Policy, private
+   database file permissions and scheduled backups.
+5. Bound storage growth: lesson snapshots keep only the lesson's words and
+   choices; add retention for receipts and superseded attempts.
+6. Replace the fixed 1/3/7/14/30 ladder with FSRS, or at least remove the 30-day
+   cap.
+7. Export learning sets (CSV or `.apkg`).
+8. Installable PWA with offline study, sliding session renewal, then split
+   `web/app.js` into modules.
+
+Later, not scheduled: real iPhone/Safari/VoiceOver checks, email recovery and
+account lifecycle, synchronization and conflict semantics, iOS/Android packaging.
+Anki import receives fixes only until milestones 1–4 are done.
 
 Current progress is independent application progress. Compatible .apkg import is
 implemented; modern compressed exports, AnkiConnect, scheduling and two-way
