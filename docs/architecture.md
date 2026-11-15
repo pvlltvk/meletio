@@ -79,7 +79,9 @@ Both authoring uploads and Anki commits check aggregate retained bytes/count ins
 their existing transactions after replay/dedup, before new insertion. An Anki commit
 reads the owner's usage once for the whole transaction and tracks admitted files in
 memory, so its cost does not grow with the files already retained; single uploads
-read usage once per request. All historical and unattached media count.
+read usage once per request. Schema7 adds the covering index
+imported_media_owner_size(owner_id, size), so that usage read never touches BLOB
+pages. All historical and unattached media count.
 Quota failure422 rolls back media, metadata and receipts;
 existing reads and dedup/replay still work when limits are reduced below usage.
 There is no automatic purge. No remote fetching, retention cleanup or deployment
@@ -166,7 +168,7 @@ and navigation cancel it, and status announcements do not shift visible layout.
 
 ## Durable training and migration
 
-Schema2 through6 use additive transactions. Existing users/sessions/attempts
+Schema2 through7 use additive transactions. Existing users/sessions/attempts
 and receipts remain byte-identical; unknown newer versions are rejected. SQLite
 uses foreign keys, WAL and a busy timeout; SQL values are parameterized.
 

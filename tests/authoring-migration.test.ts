@@ -30,7 +30,7 @@ function prepareVersionFive(path: string): {tables: string[]; rows: unknown[][];
   const newTokenTables = accessTokenTables(db);
   assert(newTokenTables.length <= 1, 'one access-token table is expected');
   for (const name of newTokenTables) db.exec(`DROP TABLE "${name}"`);
-  db.exec('PRAGMA user_version = 5');
+  db.exec('DROP INDEX imported_media_owner_size; PRAGMA user_version = 5');
   const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as {name: string}[])
     .map(({name}) => name);
   const rows = tables.map(name => db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all());
@@ -45,7 +45,7 @@ test('schema six adds empty personal-token storage and preserves every schema fi
     const before = prepareVersionFive(path);
     const after = openDatabase(path);
     try {
-      assert.equal((after.prepare('PRAGMA user_version').get() as {user_version: number}).user_version, 6);
+      assert.equal((after.prepare('PRAGMA user_version').get() as {user_version: number}).user_version, 7);
       before.tables.forEach((name, index) => assert.deepEqual(after.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all(), before.rows[index], name));
       const newTables = (after.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as {name: string}[])
         .map(({name}) => name).filter(name => !before.tables.includes(name));
@@ -67,7 +67,7 @@ test('failed schema six migration rolls back and keeps schema five data intact',
     const tokenTable = tables[0];
     fresh.prepare('INSERT INTO users VALUES (?,?,?,?)').run('owner', 'owner@example.com', 'hash', 10);
     fresh.prepare('INSERT INTO mutation_receipts VALUES (?,?,?,?,?)').run('owner', 'request', 'fingerprint', '{"saved":true}', 20);
-    fresh.exec(`DROP TABLE "${tokenTable}"; PRAGMA user_version = 5; CREATE TABLE "${tokenTable}" (marker TEXT); INSERT INTO "${tokenTable}" VALUES ('preexisting');`);
+    fresh.exec(`DROP TABLE "${tokenTable}"; DROP INDEX imported_media_owner_size; PRAGMA user_version = 5; CREATE TABLE "${tokenTable}" (marker TEXT); INSERT INTO "${tokenTable}" VALUES ('preexisting');`);
     fresh.close();
 
     assert.throws(() => openDatabase(path));
@@ -77,6 +77,51 @@ test('failed schema six migration rolls back and keeps schema five data intact',
       assert.equal((after.prepare('SELECT response FROM mutation_receipts').get() as {response: string}).response, '{"saved":true}');
       assert.equal((after.prepare(`SELECT marker FROM "${tokenTable}"`).get() as {marker: string}).marker, 'preexisting');
       assert.deepEqual((after.prepare(`PRAGMA table_info("${tokenTable}")`).all() as {name: string}[]).map(({name}) => name), ['marker']);
+    } finally { after.close(); }
+  } finally { await rm(folder, {recursive: true, force: true}); }
+});
+
+test('schema seven adds a covering media usage index and preserves every schema six media row', async () => {
+  const folder = await directory();
+  try {
+    const path = join(folder, 'app.sqlite');
+    const fresh = openDatabase(path);
+    fresh.prepare('INSERT INTO users VALUES (?,?,?,?)').run('owner', 'owner@example.com', 'hash', 10);
+    const insert = fresh.prepare('INSERT INTO imported_media VALUES (?,?,?,?,?,?)');
+    insert.run('image', 'owner', 'a'.repeat(64), 'image/webp', 3, new Uint8Array([1, 2, 3]));
+    insert.run('audio', 'owner', 'b'.repeat(64), 'audio/mpeg', 2, new Uint8Array([4, 5]));
+    fresh.exec('DROP INDEX imported_media_owner_size; PRAGMA user_version = 6');
+    const rows = fresh.prepare('SELECT * FROM imported_media ORDER BY rowid').all();
+    fresh.close();
+
+    const after = openDatabase(path);
+    try {
+      assert.equal((after.prepare('PRAGMA user_version').get() as {user_version: number}).user_version, 7);
+      assert.deepEqual(after.prepare('SELECT * FROM imported_media ORDER BY rowid').all(), rows);
+      assert((after.prepare("PRAGMA index_list('imported_media')").all() as {name: string}[]).some(({name}) => name === 'imported_media_owner_size'));
+      const plan = (after.prepare('EXPLAIN QUERY PLAN SELECT count(*) AS files, COALESCE(sum(size),0) AS bytes FROM imported_media WHERE owner_id = ?').all('owner') as {detail: string}[])
+        .map(({detail}) => detail).join('\n');
+      assert.match(plan, /USING COVERING INDEX imported_media_owner_size/);
+      assert.deepEqual({...after.prepare('SELECT count(*) AS files, COALESCE(sum(size),0) AS bytes FROM imported_media WHERE owner_id = ?').get('owner')}, {files: 2, bytes: 5});
+      assert.equal(after.prepare('PRAGMA integrity_check').get()!.integrity_check, 'ok');
+    } finally { after.close(); }
+  } finally { await rm(folder, {recursive: true, force: true}); }
+});
+
+test('schema eight is rejected without changing the database', async () => {
+  const folder = await directory();
+  try {
+    const path = join(folder, 'app.sqlite');
+    const fresh = openDatabase(path);
+    fresh.prepare('INSERT INTO users VALUES (?,?,?,?)').run('owner', 'owner@example.com', 'hash', 10);
+    fresh.exec('PRAGMA user_version = 8');
+    fresh.close();
+
+    assert.throws(() => openDatabase(path), /Unsupported database schema version/);
+    const after = new DatabaseSync(path);
+    try {
+      assert.equal((after.prepare('PRAGMA user_version').get() as {user_version: number}).user_version, 8);
+      assert.equal((after.prepare('SELECT email FROM users').get() as {email: string}).email, 'owner@example.com');
     } finally { after.close(); }
   } finally { await rm(folder, {recursive: true, force: true}); }
 });

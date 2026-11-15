@@ -8,7 +8,7 @@ export function openDatabase(path: string): DatabaseSync {
   try {
     db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
     const version = db.prepare('PRAGMA user_version').get() as {user_version: number};
-    if (version.user_version > 6) throw new Error('Unsupported database schema version.');
+    if (version.user_version > 7) throw new Error('Unsupported database schema version.');
     db.exec('PRAGMA journal_mode = WAL;');
     if (version.user_version === 0) {
       db.exec(`BEGIN IMMEDIATE;
@@ -71,6 +71,14 @@ export function openDatabase(path: string): DatabaseSync {
           CREATE TABLE access_tokens (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id), token_hash TEXT NOT NULL UNIQUE, name TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
           CREATE INDEX access_tokens_owner ON access_tokens(owner_id, expires_at);
           PRAGMA user_version = 6;
+        `);
+      });
+    }
+    if (version.user_version < 7) {
+      transaction(db, () => {
+        db.exec(`
+          CREATE INDEX imported_media_owner_size ON imported_media(owner_id, size);
+          PRAGMA user_version = 7;
         `);
       });
     }

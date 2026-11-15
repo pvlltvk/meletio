@@ -265,3 +265,82 @@ test('bulk admission reads owner usage once per transaction instead of once per 
     assert.equal((db.prepare('SELECT count(*) AS n FROM imported_media WHERE owner_id = ?').get(userId) as {n: number}).n, 70);
   } finally { db.close(); }
 });
+
+test('an Anki import commit reads owner usage once for all new media and not at all without new media', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'meletio-media-import-usage-'));
+  const databasePath = join(directory, 'app.sqlite');
+  const app = createApplication({databasePath, content: {uiLanguage: 'en', decks: []}, origin, registration: 'open',
+    mediaLimits: {bytes: 1_000_000, files: 100}} as Parameters<typeof createApplication>[0]);
+  const prepare = DatabaseSync.prototype.prepare;
+  let usageScans = 0;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      app.server.once('error', reject);
+      app.server.listen(0, '127.0.0.1', resolve);
+    });
+    const address = app.server.address();
+    assert(address && typeof address !== 'string');
+    const base = `http://127.0.0.1:${address.port}`;
+    async function request(path: string, options: {cookie?: string; body?: unknown; bytes?: Buffer; headers?: Record<string, string>} = {}) {
+      const headers: Record<string, string> = {Origin: origin, ...options.headers};
+      if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+      if (options.bytes) headers['Content-Type'] = 'application/octet-stream';
+      if (options.cookie) headers.Cookie = options.cookie;
+      const response = await fetch(base + path, {method: options.body === undefined && options.bytes === undefined ? 'GET' : 'POST', headers,
+        body: options.bytes ? new Uint8Array(options.bytes) : options.body === undefined ? undefined : JSON.stringify(options.body)});
+      const text = await response.text();
+      let body: any;
+      try { body = JSON.parse(text); } catch { body = text; }
+      return {response, body, text};
+    }
+    const registered = await request('/api/auth/register', {body: {email: 'import-usage@example.com', password}});
+    assert.equal(registered.response.status, 201, registered.text);
+    const cookie = registered.response.headers.get('set-cookie')!.split(';')[0];
+    const retained = new DatabaseSync(databasePath);
+    try {
+      const insert = retained.prepare('INSERT INTO imported_media VALUES (?,?,?,?,?,?)');
+      for (let index = 0; index < 3; index++) {
+        insert.run(`retained-${index}`, registered.body.user.id, createHash('sha256').update(`retained-${index}`).digest('hex'), 'image/png', image.length, image);
+      }
+    } finally { retained.close(); }
+    const audio = (index: number) => { const bytes = wav(); bytes.writeInt16LE(index + 1, 44); return bytes; };
+    const withMedia = Array.from({length: 6}, (_, index) => ({guid: `usage-media-${index}`, fields: [`word ${index}`,
+      `<div>meaning ${index} <img src="photo-${index}.png"></div>`, `[sound:voice-${index}.wav]`]}));
+    const plain = [{guid: 'usage-plain', deckIds: ['3'], fields: ['plain', 'plain meaning', '']}];
+    const source = await mkdtemp(join(directory, 'package-'));
+    const archive = (await makePackage(source, {notes: [...withMedia, ...plain], media: Object.fromEntries(withMedia.flatMap((_, index) => [
+      [`photo-${index}.png`, Buffer.concat([png, Buffer.from([index])])], [`voice-${index}.wav`, audio(index)]]))})).bytes;
+    async function commit(sourceDeckId: string, requestId: string) {
+      const uploaded = await request('/api/imports/uploads', {cookie, bytes: archive, headers: {
+        'X-Import-Request-Id': `${requestId}-upload`, 'X-Import-Filename': 'usage.apkg'}});
+      assert.equal(uploaded.response.status, 201, uploaded.text);
+      const preview = await request(`/api/imports/${uploaded.body.uploadId}/preview`, {cookie, body: {sourceDeckId,
+        noteTypeId: '100', includeChildren: false, mapping: {term: 'Term', meaning: 'Meaning', image: 'Meaning', audio: 'Audio'},
+        title: `Usage ${requestId}`, termLang: 'el', meaningLang: 'en', termDir: 'ltr', meaningDir: 'ltr'}});
+      assert.equal(preview.response.status, 200, preview.text);
+      DatabaseSync.prototype.prepare = function (this: DatabaseSync, sql: string) {
+        if (sql.includes('sum(size)')) usageScans += 1;
+        return prepare.call(this, sql);
+      };
+      try {
+        const result = await request(`/api/imports/${uploaded.body.uploadId}/commit`, {cookie, body: {previewId: preview.body.previewId,
+          requestId, acceptSkipped: true}});
+        assert.equal(result.response.status, 200, result.text);
+      } finally { DatabaseSync.prototype.prepare = prepare; }
+    }
+    const count = () => {
+      const db = new DatabaseSync(databasePath);
+      try { return (db.prepare('SELECT count(*) AS n FROM imported_media WHERE owner_id = ?').get(registered.body.user.id) as {n: number}).n; } finally { db.close(); }
+    };
+    await commit('3', 'usage-plain-commit');
+    assert.equal(usageScans, 0);
+    assert.equal(count(), 3);
+    await commit('1', 'usage-media-commit');
+    assert.equal(usageScans, 1);
+    assert.equal(count(), 15);
+  } finally {
+    DatabaseSync.prototype.prepare = prepare;
+    await app.close();
+    await rm(directory, {recursive: true, force: true});
+  }
+});

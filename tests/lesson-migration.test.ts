@@ -17,14 +17,14 @@ test('schema five adds empty review storage and preserves every schema four tabl
     before.prepare('INSERT INTO mutation_receipts VALUES (?,?,?,?,?)').run('owner', 'request', 'fingerprint', '{"attempt":{}}', 20);
     before.prepare('INSERT INTO training_snapshots VALUES (?,?,?)').run('attempt', 'owner', '{"snapshot":true}');
     before.prepare('INSERT INTO training_answers VALUES (?,?,?,?,?)').run('attempt', 0, 'word', 'option', 1);
-    before.exec('DROP TABLE access_tokens; DROP TABLE IF EXISTS word_reviews; PRAGMA user_version=4;');
+    before.exec('DROP TABLE access_tokens; DROP TABLE IF EXISTS word_reviews; DROP INDEX imported_media_owner_size; PRAGMA user_version=4;');
     const names = (before.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as {name: string}[]).map(row => row.name);
     const rows = names.map(name => before.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all());
     before.close();
 
     const after = openDatabase(path);
     try {
-      assert.equal((after.prepare('PRAGMA user_version').get() as {user_version: number}).user_version, 6);
+      assert.equal((after.prepare('PRAGMA user_version').get() as {user_version: number}).user_version, 7);
       names.forEach((name, index) => assert.deepEqual(after.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all(), rows[index], name));
       assert.equal((after.prepare('SELECT count(*) AS n FROM word_reviews').get() as {n: number}).n, 0);
       assert.equal((after.prepare('PRAGMA integrity_check').get() as {integrity_check: string}).integrity_check, 'ok');
@@ -39,7 +39,7 @@ test('failed schema five migration rolls back and keeps schema four rows intact'
     const before = openDatabase(path);
     before.prepare('INSERT INTO users VALUES (?,?,?,?)').run('owner', 'owner@example.com', 'hash', 10);
     before.prepare('INSERT INTO mutation_receipts VALUES (?,?,?,?,?)').run('owner', 'request', 'fingerprint', '{"kept":true}', 20);
-    before.exec('DROP TABLE access_tokens; DROP TABLE IF EXISTS word_reviews; PRAGMA user_version=4;');
+    before.exec('DROP TABLE access_tokens; DROP TABLE IF EXISTS word_reviews; DROP INDEX imported_media_owner_size; PRAGMA user_version=4;');
     before.exec("CREATE TABLE word_reviews (marker TEXT); INSERT INTO word_reviews VALUES ('preexisting');");
     before.close();
 
