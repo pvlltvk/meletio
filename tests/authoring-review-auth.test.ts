@@ -227,6 +227,25 @@ test('bearer scheme is case insensitive, token secret is lowercase hex, and revo
   } finally { await f.close(); }
 });
 
+test('an invalid token name is rejected before the current password is checked or counted', async () => {
+  const f = await fixture();
+  try {
+    const owner = await f.register('token-name-order@example.com');
+    for (let index = 0; index < 5; index++) {
+      const rejected = await f.request('/api/account/tokens', {cookie: owner.cookie,
+        body: {name: '   ', currentPassword: 'incorrect password'}});
+      assert.equal(rejected.response.status, 400, rejected.text);
+      assert.match(rejected.body.error.message, /token name/);
+    }
+    const wrongPassword = await f.request('/api/account/tokens', {cookie: owner.cookie,
+      body: {name: 'after rejected names', currentPassword: 'incorrect password'}});
+    assert.equal(wrongPassword.response.status, 403, wrongPassword.text);
+    const db = f.database();
+    try { assert.equal((db.prepare('SELECT count(*) AS n FROM access_tokens').get() as {n: number}).n, 0); }
+    finally { db.close(); }
+  } finally { await f.close(); }
+});
+
 test('token confirmation shares failed-password limits and the two-hash concurrency cap', async () => {
   const f = await fixture();
   try {

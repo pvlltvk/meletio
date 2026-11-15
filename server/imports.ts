@@ -446,12 +446,13 @@ export class Imports {
       const changed = !existing || preview.report.added + preview.report.updated > 0 || Boolean(preview.report.restored) || existing.title !== preview.title || (preview.repairMedia && hash(JSON.parse(existing.source_json)) !== hash(preview.source));
       const revision = existing ? existing.revision + (changed ? 1 : 0) : 1;
       if (!existing) this.db.prepare('INSERT INTO imported_decks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(deckId, userId, preview.title, preview.source.termLang, preview.source.meaningLang, preview.source.termDir, preview.source.meaningDir, revision, JSON.stringify(preview.source), stage.archive_hash!, this.now(), this.now());
+      const admit = this.mediaStorage.admitter(userId);
       const storeMedia = (media: Media | null): string | null => {
         if (!media) return null;
         const found = this.db.prepare('SELECT id FROM imported_media WHERE owner_id = ? AND sha256 = ? AND mime = ?').get(userId, media.sha256!, media.mime!) as {id: string} | undefined;
         if (found) return found.id;
         const value = this.mediaBytes(stage, media);
-        return this.mediaStorage.store(userId, media.sha256!, value.mime, value.bytes);
+        return admit(media.sha256!, value.mime, value.bytes);
       };
       let order = Number((this.db.prepare('SELECT MAX(sort_order) AS last FROM imported_words WHERE deck_id = ?').get(deckId) as {last: number | null}).last ?? -1) + 1;
       for (const note of preview.candidates) {

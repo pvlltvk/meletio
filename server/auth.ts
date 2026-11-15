@@ -1,7 +1,7 @@
 import {createHash, randomBytes, randomUUID, scrypt, timingSafeEqual} from 'node:crypto';
 import type {DatabaseSync} from 'node:sqlite';
 import {AuthLimits} from './auth-limits';
-import type {AccessTokens} from './access-tokens';
+import {tokenName, type AccessTokens} from './access-tokens';
 import {transaction} from './database';
 import {ApiError, fields, invalid, stringField, type User} from './types';
 
@@ -105,6 +105,7 @@ export class Auth {
     fields(body, ['name', 'currentPassword']);
     const currentPassword = stringField(body.currentPassword, 'current password');
     if (currentPassword.length < 12) invalid('Use at least 12 characters for your password.');
+    const name = tokenName(body.name);
     const user = this.user(cookie);
     this.limits.check(user.email, address);
     const row = this.db.prepare('SELECT password_hash FROM users WHERE id = ?').get(user.id) as {password_hash: string};
@@ -114,7 +115,7 @@ export class Auth {
       this.limits.failure(user.email, address);
       throw new ApiError(403, 'invalid_current_password', 'Current password is incorrect.');
     }
-    const result = tokens.create(user.id, {name: body.name}, () => {
+    const result = tokens.create(user.id, {name}, () => {
       const active = this.user(cookie);
       if (active.id !== user.id) throw new ApiError(401, 'account_changed', 'Your account changed. Log in again.');
       const current = this.db.prepare('SELECT password_hash FROM users WHERE id = ?').get(user.id) as {password_hash: string} | undefined;

@@ -8,6 +8,12 @@ const hashToken = (token: string) => createHash('sha256').update(token).digest('
 
 interface TokenMetadata {id: string; name: string; createdAt: number; expiresAt: number}
 
+export function tokenName(value: unknown): string {
+  const name = stringField(value, 'token name', 240).trim();
+  if (!name || [...name].length > 120) invalid('Invalid token name.');
+  return name;
+}
+
 export class AccessTokens {
   constructor(private db: DatabaseSync, private now: () => number) {}
 
@@ -18,8 +24,7 @@ export class AccessTokens {
 
   create(userId: string, body: Record<string, unknown>, verify?: () => void): TokenMetadata & {token: string} {
     fields(body, ['name']);
-    const name = stringField(body.name, 'token name', 240).trim();
-    if (!name || [...name].length > 120) invalid('Invalid token name.');
+    const name = tokenName(body.name);
     return transaction(this.db, () => {
       verify?.();
       const createdAt = this.now();

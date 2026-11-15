@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import {existsSync} from 'node:fs';
 import {mkdtemp, rm} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
@@ -8,6 +8,8 @@ import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {test} from 'node:test';
 import {createApplication} from '../server/app';
+import {openDatabase} from '../server/database';
+import {MediaStorage} from '../server/media-storage';
 import {makePackage, png, wav} from './helpers/anki-package';
 
 const origin = 'http://127.0.0.1:4173';
@@ -230,4 +232,36 @@ test('a partially admitted Anki import rolls back its whole commit and receipt',
     await app.close();
     await rm(directory, {recursive: true, force: true});
   }
+});
+
+test('bulk admission reads owner usage once per transaction instead of once per file', () => {
+  const db = openDatabase(':memory:');
+  try {
+    const userId = randomUUID();
+    db.prepare('INSERT INTO users VALUES (?,?,?,?)').run(userId, 'bulk-admission@example.com', 'hash', 0);
+    const retained = db.prepare('INSERT INTO imported_media VALUES (?,?,?,?,?,?)');
+    for (let index = 0; index < 50; index++) {
+      retained.run(`retained-${index}`, userId, createHash('sha256').update(`retained-${index}`).digest('hex'), 'image/png', image.length, image);
+    }
+    let usageScans = 0;
+    const counted = new Proxy(db, {
+      get: (target, property) => {
+        const value = Reflect.get(target, property) as unknown;
+        if (property === 'prepare') {
+          return (sql: string) => {
+            if (sql.includes('sum(size)')) usageScans += 1;
+            return target.prepare(sql);
+          };
+        }
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+    }) as DatabaseSync;
+    const storage = new MediaStorage(counted, {bytes: image.length * 100, files: 100});
+    db.exec('BEGIN IMMEDIATE');
+    const admit = storage.admitter(userId);
+    for (let index = 0; index < 20; index++) admit(createHash('sha256').update(`added-${index}`).digest('hex'), 'image/png', image);
+    db.exec('COMMIT');
+    assert.equal(usageScans, 1);
+    assert.equal((db.prepare('SELECT count(*) AS n FROM imported_media WHERE owner_id = ?').get(userId) as {n: number}).n, 70);
+  } finally { db.close(); }
 });

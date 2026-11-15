@@ -76,8 +76,11 @@ wrong-owner/wrong-kind attachments fail. Existing owner media responses provide
 GET/HEAD/ranges through the dedicated authoring namespace. Shared MediaStorage enforces512MiB/10000unique BLOBs per account by default,
 configurable with MEDIA_MAX_BYTES/MEDIA_MAX_FILES validated before database creation.
 Both authoring uploads and Anki commits check aggregate retained bytes/count inside
-their existing transactions after replay/dedup, before new insertion. All historical
-and unattached media count. Quota failure422 rolls back media, metadata and receipts;
+their existing transactions after replay/dedup, before new insertion. An Anki commit
+reads the owner's usage once for the whole transaction and tracks admitted files in
+memory, so its cost does not grow with the files already retained; single uploads
+read usage once per request. All historical and unattached media count.
+Quota failure422 rolls back media, metadata and receipts;
 existing reads and dedup/replay still work when limits are reduced below usage.
 There is no automatic purge. No remote fetching, retention cleanup or deployment
 hardening is introduced. See [API](api.md).

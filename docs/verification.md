@@ -93,7 +93,7 @@ or live vocabulary mutation in this procedure.
 
 ## Coverage and recorded results
 
-The current automated baseline passes 174 Node tests and 68 browser groups
+The current automated baseline passes 176 Node tests and 68 browser groups
 (portable8, account/training9, import7, media3, polish6, recovery2, follow-up6,
 account management8, lessons6, selection4, authoring9).
 The source-only install/build and process-restart checks also pass.
@@ -107,8 +107,9 @@ Coverage includes:
   the 2,000-word and 1 MiB limits, deleted IDs, effective browser/API edits and
   unchanged historical lesson/review behavior.
 - Shared per-owner media byte/count admission across API and Anki, transactional
-  import rollback, last-slot contention, dedup/replay/reads at or above quota, and
-  invalid option/environment validation before data creation.
+  import rollback, last-slot contention, dedup/replay/reads at or above quota, a
+  single owner-usage read per bulk transaction, and invalid option/environment
+  validation before data creation.
 - Private binary uploads, all supported signatures, exact 512 KiB boundary,
   media kinds/ownership, deduplication, filename/content replay across restart,
   interrupted/revoked/expired/slow streams and HTTP range reads.
