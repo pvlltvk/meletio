@@ -62,7 +62,7 @@ Keep that process running. It creates a fresh temporary SQLite database and four
 synthetic Anki exports, including oversized pictures, child decks and a source
 update. It starts open and closed registration servers on the selected port
 and the next port, sharing only the synthetic database. The JSON manifest
-contains both loopback URLs and eleven absolute runner paths under ignored `artifacts/browser-*/`. No test account or import is
+contains both loopback URLs and fourteen absolute runner paths under ignored `artifacts/browser-*/`. No test account or import is
 created in `data/meletio.sqlite`.
 
 Invoke the external tools with structured arguments, using the paths printed by
@@ -84,7 +84,9 @@ do not substitute the live Wi-Fi URL. Each result lists passed groups and any
 page errors. Run `browser-check`, `backend-browser-check`, `import-browser-check`,
 `media-import-browser-check`, `polish-browser-check`,
 `polish-recovery-browser-check`, `follow-up-browser-check`,
-`account-browser-check`, `lesson-browser-check`, `selection-browser-check` and `authoring-browser-check`. The existing auth
+`account-browser-check`, `lesson-browser-check`, `selection-browser-check`,
+`authoring-browser-check`, `browser-authoring-check`, `browser-word-authoring-check`
+and `browser-authoring-media-check`. The existing auth
 throttle also applies to tests: if repeated runs hit429, stop and start a fresh
 session instead of changing the app's limiter. Close the browser with
 `browser_close`, then press Ctrl-C in the session terminal. The process removes
@@ -93,13 +95,20 @@ or live vocabulary mutation in this procedure.
 
 ## Coverage and recorded results
 
-The current automated baseline passes 179 Node tests and 68 browser groups
+The current automated baseline passes 179 Node tests and 93 browser groups
 (portable8, account/training9, import7, media3, polish6, recovery2, follow-up6,
-account management8, lessons6, selection4, authoring9).
+account management8, lessons6, selection4, authoring9, set creation7, word entry9,
+word media9).
 The source-only install/build and process-restart checks also pass.
 
 Coverage includes:
 
+- Browser creation/selection of native sets, single-word entry and optional
+  picture/recording uploads. Checks cover exact replay after committed-but-lost
+  responses, read-only recovery after successful saves, stale revisions, partial
+  upload reuse, retained filenames, file-size/signature/quota errors and
+  cancellation across target/account changes and cached-page lifecycle events.
+  Synthetic byte readback and 390px RTL/focus checks use the isolated server.
 - Authoring-only personal tokens, password-confirmed issuance with credential/
   session race guards and shared hashing/failure limits, 90-day expiry, precise
   revocation results, Basic/Bearer routing and password/secret lifecycle handling.

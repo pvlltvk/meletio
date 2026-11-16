@@ -61,6 +61,18 @@ before pagination, source mappings are hidden for native sets, and Anki preview
 and commit reject native destinations. Existing persisted overlays and deletion
 controls apply to native content. There is no separate training model.
 
+Browser set creation and word entry use the same cookie-authenticated authoring
+endpoints. An editor retains its draft, selected File objects, exact pending
+requests and confirmed results in memory. Uploads complete before the single-word
+batch; successful uploads are reused during recovery. A confirmed content write
+followed by a failed catalog/deck refresh retries reads only. Stale revisions
+refresh the target while retaining the draft for an explicit new save. Account
+generation, editor identity and destination checks guard every asynchronous stage.
+Cancel remains available during saves, with an unresolved-write warning; cancel,
+logout and page lifecycle changes invalidate the editor and prevent later stages.
+Adding words preserves the active training snapshot and feedback. No draft or
+File is persisted in browser storage, and no backend or schema change is needed.
+
 Content mutations use account-scoped receipts with canonical object-key ordering
 and operation/target fingerprints. Batch validation, stable word upserts, effective
 size checks, revision and replay response share one transaction. A receipt is

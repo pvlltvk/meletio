@@ -5,8 +5,8 @@ upload pictures and human recordings. These sets appear in the existing app and
 use its normal practice and lesson scheduling.
 
 This API writes **native authored sets**. Anki-imported and default sets retain
-their existing browser editing controls. Browser create-set/add-word forms are
-a separate roadmap milestone.
+their existing browser editing controls. The browser's create-set and add-word
+forms use these same endpoints with session cookies.
 
 ## Access tokens
 

@@ -27,12 +27,13 @@ and recordings from scripts and agents. See the [API reference](api.md).
   Shared account byte/count quotas apply to API uploads and Anki imports.
 - Writes are idempotent by request ID, so a retried call does not duplicate words.
 
-## Planned
-
 ### 2. Authoring in the app
 
 Create sets and add words in the browser, using the same endpoints. Vocabulary
-no longer depends on Anki desktop.
+no longer depends on Anki desktop. New words can include a picture and a human
+recording; interrupted saves have explicit retries.
+
+## Planned
 
 ### 3. Recall practice
 
