@@ -78,7 +78,7 @@ configurable with MEDIA_MAX_BYTES/MEDIA_MAX_FILES validated before database crea
 Both authoring uploads and Anki commits check aggregate retained bytes/count inside
 their existing transactions after replay/dedup, before new insertion. An Anki commit
 reads the owner's usage once for the whole transaction and tracks admitted files in
-memory, so its cost does not grow with the files already retained; single uploads
+memory, avoiding a repeated scan of retained files for each new file; single uploads
 read usage once per request. Schema7 adds the covering index
 imported_media_owner_size(owner_id, size), so that usage read never touches BLOB
 pages. All historical and unattached media count.
