@@ -413,7 +413,7 @@ function updateControls() {
   app.querySelectorAll('button, input, select').forEach(control => {
     control.disabled = Boolean(busy || failedOperation || importBusy || authoringEditor?.busy) && !(importBusy && control.id === 'import-file') && !control.hasAttribute('data-retry') && !control.hasAttribute('data-reload') && !(importBusy && (control.hasAttribute('data-import-cancel') || control.hasAttribute('data-import-recover'))) && !(authoringEditor?.busy && (control.hasAttribute('data-authoring-cancel') || control.hasAttribute('data-authoring-discard') || control.hasAttribute('data-authoring-keep') || control.hasAttribute('data-logout')));
   });
-  if (authoringEditor?.operation) app.querySelectorAll('.authoring-card input,.authoring-card select,.authoring-card button[type="submit"]').forEach(control => { control.disabled = true; });
+  if (authoringEditor?.operation) app.querySelectorAll('.authoring-card input,.authoring-card select,.authoring-card button[type="submit"],[data-authoring-remove]').forEach(control => { control.disabled = true; });
   if (passwordPending) app.querySelectorAll('#password-form button,#password-form input').forEach(control => { control.disabled = true; });
   if (tokenPending) app.querySelectorAll('#token-controls button,#token-controls input').forEach(control => { control.disabled = true; });
 }
@@ -784,7 +784,7 @@ function openWordEditor() {
   if (!user || !deckLoaded || !deck?.authored) return;
   stopAudio();
   authoringEditor = {kind: 'word', deckId: deck.id, revision: deck.revision,
-    draft: {term: '', meaning: ''}, operation: null, busy: false, error: '', discard: null};
+    draft: {term: '', meaning: ''}, media: {image: null, audio: null}, operation: null, busy: false, error: '', discard: null};
   render();
   app.querySelector('#add-word-form [name=term]')?.focus();
 }
@@ -808,13 +808,31 @@ function readAuthoringDraft(form) {
   for (const name of names) authoringEditor.draft[name] = form.elements[name].value;
 }
 
+function chooseAuthoringFile(kind, file) {
+  const state = authoringEditor;
+  if (state?.kind !== 'word' || state.operation || state.busy) return;
+  const extension = file?.name.match(/\.[^.]+$/)?.[0].toLowerCase();
+  const supported = kind === 'image' ? ['.png', '.jpg', '.jpeg', '.webp'] : ['.mp3', '.wav', '.ogg', '.m4a', '.mp4'];
+  const error = !file ? '' : file.size > 512 * 1024 ? 'Pictures and recordings must be 512 KiB or smaller.'
+    : !supported.includes(extension) ? `Choose a supported ${kind === 'image' ? 'picture' : 'recording'} file.` : '';
+  const filename = file && /^[\x20-\x7e]{1,255}$/.test(file.name) && !/[\\/:]/.test(file.name) ? file.name : `${kind}${extension}`;
+  state.media[kind] = file ? {file, filename, requestId: operationId(), id: null, error} : null;
+  state.error = '';
+  render();
+  app.querySelector(`[data-authoring-remove="${kind}"]`)?.focus();
+}
+
+function authoringFiles(state) {
+  return `<p>Optional pictures and human recordings: up to 512 KiB each. Uploaded files are kept if you cancel a save.</p>${[['image', 'Picture', '.png,.jpg,.jpeg,.webp'], ['audio', 'Recording', '.mp3,.wav,.ogg,.m4a,.mp4']].map(([kind, label, accept]) => `<div class="authoring-file"><label for="word-${kind}-file">${label} (optional)<input id="word-${kind}-file" type="file" accept="${accept}"></label>${state.media[kind] ? `<p>${escapeHtml(state.media[kind].file.name)}</p>${state.media[kind].error ? `<p class="account-error" role="alert">${escapeHtml(state.media[kind].error)}</p>` : ''}<button type="button" class="text-button" data-authoring-remove="${kind}">Remove ${label.toLowerCase()}</button>` : ''}</div>`).join('')}`;
+}
+
 function authoringView() {
   const state = authoringEditor;
   const draft = state.draft;
   const addingWord = state.kind === 'word';
   const direction = (name, title) => `<label>${title}<select name="${name}"><option value="ltr" ${draft[name] === 'ltr' ? 'selected' : ''}>Left to right</option><option value="rtl" ${draft[name] === 'rtl' ? 'selected' : ''}>Right to left</option></select></label>`;
   const fields = addingWord
-    ? `<label>Word<input name="term" maxlength="4000" required lang="${escapeHtml(deck.termLang)}" dir="${safeDirection(deck.termDir)}" value="${escapeHtml(draft.term)}"></label><label>Translation<input name="meaning" maxlength="4000" required lang="${escapeHtml(deck.meaningLang)}" dir="${safeDirection(deck.meaningDir)}" value="${escapeHtml(draft.meaning)}"></label>`
+    ? `<label>Word<input name="term" maxlength="4000" required lang="${escapeHtml(deck.termLang)}" dir="${safeDirection(deck.termDir)}" value="${escapeHtml(draft.term)}"></label><label>Translation<input name="meaning" maxlength="4000" required lang="${escapeHtml(deck.meaningLang)}" dir="${safeDirection(deck.meaningDir)}" value="${escapeHtml(draft.meaning)}"></label>${authoringFiles(state)}`
     : `<label>Set name<input name="title" maxlength="240" required value="${escapeHtml(draft.title)}"></label><div class="import-language-pair"><label>Word language code<input name="termLang" maxlength="64" required value="${escapeHtml(draft.termLang)}"></label><label>Translation language code<input name="meaningLang" maxlength="64" required value="${escapeHtml(draft.meaningLang)}"></label>${direction('termDir', 'Word direction')}${direction('meaningDir', 'Translation direction')}</div>`;
   const confirmation = state.discard ? '<section class="confirmation" role="alert"><p>This save may already have completed. Check your learning set before adding it again. Leave the editor?</p><div class="content-actions"><button type="button" class="primary" data-authoring-discard="true">Leave editor</button><button type="button" class="secondary" data-authoring-keep="true">Keep editing</button></div></section>' : '';
   app.innerHTML = chrome(`<section class="intro"><h1>${addingWord ? 'Add word' : 'Create learning set'}</h1><p>${addingWord ? escapeHtml(deck.title) : 'Choose the languages before adding your words. Languages and text directions are fixed after creation.'}</p></section><section class="settings-card authoring-card"><form id="${addingWord ? 'add-word-form' : 'create-set-form'}" class="content-form">${fields}${state.error ? `<p class="account-error" role="alert">${escapeHtml(state.error)}</p>` : ''}${state.busy ? '<p role="status">Saving…</p>' : ''}<div class="content-actions">${state.operation ? state.error && !state.busy ? '<button type="button" class="primary" data-authoring-retry="true">Retry save</button>' : '' : `<button class="primary" type="submit">${addingWord ? 'Save word' : 'Create learning set'}</button>`}<button class="secondary" type="button" data-authoring-cancel="true">Cancel</button></div></form>${confirmation}</section>`, screen === 'settings' ? 'settings' : 'vocabulary');
@@ -835,11 +853,16 @@ async function saveAuthoredContent(form) {
   const state = authoringEditor;
   if (!state || state.busy || !user || busy || importBusy || failedOperation) return;
   if (form) readAuthoringDraft(form);
+  if (state.kind === 'word' && !state.operation) {
+    const invalidFile = Object.values(state.media).find(media => media?.error);
+    if (invalidFile) { state.error = 'Remove or replace the invalid file before saving.'; render(); return; }
+  }
   const current = generation;
   const ownerId = user.id;
   const active = () => authoringEditor === state && current === generation && user?.id === ownerId && (state.kind !== 'word' || deck?.id === state.deckId);
   state.operation ??= {path: state.kind === 'word' ? `/api/authoring/decks/${encodeURIComponent(state.deckId)}/words` : '/api/authoring/decks',
-    body: state.kind === 'word' ? {revision: state.revision, words: [{...state.draft}], requestId: operationId()} : {...state.draft, requestId: operationId()}, result: null};
+    body: state.kind === 'word' ? {revision: state.revision, words: [{...state.draft}], requestId: operationId()} : {...state.draft, requestId: operationId()},
+    media: state.kind === 'word' ? Object.entries(state.media).filter(([_kind, media]) => media) : [], result: null};
   const operation = state.operation;
   state.busy = true;
   state.error = '';
@@ -850,6 +873,16 @@ async function saveAuthoredContent(form) {
       return;
     }
     if (!operation.result) {
+      for (const [kind, media] of operation.media) {
+        if (!media.id) {
+          const uploaded = await request('/api/authoring/media', media.file, {binary: true,
+            headers: {'X-Request-Id': media.requestId, 'X-Media-Filename': media.filename}});
+          if (!active()) return;
+          if (!uploaded.id || uploaded.kind !== kind) throw new Error('The upload result could not be confirmed.');
+          media.id = uploaded.id;
+        }
+        operation.body.words[0][`${kind}MediaId`] = media.id;
+      }
       const result = await request(operation.path, operation.body);
       if (!active()) return;
       if (state.kind === 'word' ? result.deckId !== state.deckId || !result.words?.length : !result.deck?.id) throw new Error('The save result could not be confirmed.');
@@ -1398,6 +1431,10 @@ app.addEventListener('input', event => {
 });
 
 app.addEventListener('change', event => {
+  if (['word-image-file', 'word-audio-file'].includes(event.target.id)) {
+    chooseAuthoringFile(event.target.id === 'word-image-file' ? 'image' : 'audio', event.target.files[0]);
+    return;
+  }
   if (event.target.closest('#create-set-form,#add-word-form')) { readAuthoringDraft(event.target.form); return; }
   if (serverBacked && event.target.id === 'import-file' && !busy && !failedOperation) { chooseImportFile(event.target.files[0]); return; }
   if (serverBacked && (busy || failedOperation || importBusy)) return;
@@ -1487,6 +1524,11 @@ app.addEventListener('click', event => {
     }
     if (failedOperation) return;
     if (button.dataset.authoringRetry) { saveAuthoredContent(); return; }
+    if (button.dataset.authoringRemove && authoringEditor?.kind === 'word' && !authoringEditor.operation) {
+      chooseAuthoringFile(button.dataset.authoringRemove);
+      app.querySelector(`#word-${button.dataset.authoringRemove}-file`)?.focus();
+      return;
+    }
     if (button.dataset.createSet) { openSetEditor(); return; }
     if (button.dataset.addWord) { openWordEditor(); return; }
     if (authoringEditor && button.dataset.screen) { closeAuthoringEditor(button.dataset.screen); return; }

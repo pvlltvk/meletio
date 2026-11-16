@@ -71,3 +71,5 @@ button,input,select,textarea,summary{font:inherit}button,select,input:not([type=
 #created-token{display:block;width:100%;min-height:90px;margin-top:8px;padding:12px;border:1px solid var(--line);border-radius:9px;font:inherit;overflow-wrap:anywhere;resize:vertical}#created-token:focus-visible{outline:3px solid #5364d5;outline-offset:4px}[data-token-row] strong,[data-token-row] small{display:block;overflow-wrap:anywhere}[data-token-row]>span{min-width:0}
 
 .authoring-card{max-width:620px}.authoring-card .content-form{margin-top:0}.authoring-card select{width:100%;min-height:48px;padding:12px;border:1px solid var(--line);border-radius:9px;background:white}.authoring-card>p{line-height:1.6}
+
+.authoring-file{min-width:0}.authoring-file input{max-width:100%;font-size:13px}.authoring-file p{overflow-wrap:anywhere;line-height:1.6}.authoring-card form>p{font-size:14px;line-height:1.6}
