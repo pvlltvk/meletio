@@ -83,6 +83,42 @@ recordings. Words without audio show “No recording.” Personal media remain
 outside this project. Browser audio tests inject a silent WAV only in an isolated
 test context; this is not pronunciation or demo content.
 
+## Create vocabulary
+
+In Settings, choose **Create learning set**, enter its name, language codes and
+text directions, then create it. Its Vocabulary screen offers **Add word**.
+Enter a word and translation, optionally attach a picture and a human recording,
+then choose **Save word**. Add four distinct words with different meanings to
+start a lesson. Languages and directions are fixed when the set is created.
+
+Pictures and recordings must already fit 512 KiB each. See the
+[supported media formats](docs/api.md#limits-and-media-formats); the browser does
+not resize pictures or record audio. New words
+can be added to native sets; Anki and default sets keep their existing text
+editing controls.
+
+If a save cannot be confirmed, **Retry save** checks the same operation without
+adding it twice. A stale set keeps your draft and asks you to review and save
+again. Drafts and selected files last only while the editor is open. Leaving an
+unresolved save warns that it may already have completed; after a reload, check
+the vocabulary before adding it again. Uploaded files count toward storage even
+if you cancel before saving the word.
+
+## Author vocabulary from scripts
+
+In Settings, choose **Manage access tokens**, name a token, confirm your current
+password and copy its secret when it is created. Scripts can create private
+learning sets, add or update words in batches, and upload pictures and human recordings without an Anki export.
+See the [authoring API reference and examples](docs/api.md).
+
+Tokens expire after 90 days and can be revoked in Settings. Changing your password
+revokes all personal tokens; logging out keeps them. A token authorizes only the
+authoring API for its account. It cannot manage accounts or submit practice.
+
+API writes target native authored sets. These sets work with the existing
+vocabulary, practice, lessons and edit/delete controls. Uploaded files must already fit 512 KiB;
+the API uses the same media formats and signature checks as Anki import.
+
 ## Import from Anki
 
 In Settings, choose **Choose Anki file** and select a deck export (`.apkg`).
@@ -127,7 +163,7 @@ Changes to the default Greek and Arabic sets are private to your account, and
 keep the same set identities and saved practice. Changes survive reloads and
 restarts; a stale tab keeps your draft so you can review it before saving again.
 The portable preview remains read-only. If you remove every set, Settings still
-lets you import vocabulary.
+lets you create a learning set or import vocabulary.
 
 Local edits and deletions survive later Anki updates. Advanced import options can
 explicitly replace them with accepted source content; older or conflicting notes
@@ -182,6 +218,15 @@ Keep backups, logs, browser captures and any credentials outside this repository
 | `APP_ORIGIN` | `http://HOST:PORT` | Exact browser origin allowed to make changes |
 | `SECURE_COOKIES` | `false` | Set `true` when serving through HTTPS |
 | `REGISTRATION` | `closed` | Allow new accounts only when explicitly set to `open` |
+| `MEDIA_MAX_BYTES` | `536870912` | Maximum stored media bytes per account (512 MiB) |
+| `MEDIA_MAX_FILES` | `10000` | Maximum unique stored media files per account |
+
+Both media limits must be positive safe integers. They apply jointly to API
+uploads and Anki imports and include retained historical and unattached media.
+Existing media remain readable if a lowered limit puts an account over quota.
+Replay and duplicate uploads still work; new files receive `422 storage_limit`.
+An import that exceeds quota rolls back its complete commit. Raising a limit
+requires restarting with the new configuration; no media is deleted automatically.
 
 Back up while the app is running with an explicit new file outside the project:
 

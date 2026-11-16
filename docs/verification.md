@@ -62,7 +62,7 @@ Keep that process running. It creates a fresh temporary SQLite database and four
 synthetic Anki exports, including oversized pictures, child decks and a source
 update. It starts open and closed registration servers on the selected port
 and the next port, sharing only the synthetic database. The JSON manifest
-contains both loopback URLs and ten absolute runner paths under ignored `artifacts/browser-*/`. No test account or import is
+contains both loopback URLs and fourteen absolute runner paths under ignored `artifacts/browser-*/`. No test account or import is
 created in `data/meletio.sqlite`.
 
 Invoke the external tools with structured arguments, using the paths printed by
@@ -84,7 +84,9 @@ do not substitute the live Wi-Fi URL. Each result lists passed groups and any
 page errors. Run `browser-check`, `backend-browser-check`, `import-browser-check`,
 `media-import-browser-check`, `polish-browser-check`,
 `polish-recovery-browser-check`, `follow-up-browser-check`,
-`account-browser-check`, `lesson-browser-check` and `selection-browser-check`. The existing auth
+`account-browser-check`, `lesson-browser-check`, `selection-browser-check`,
+`authoring-browser-check`, `browser-authoring-check`, `browser-word-authoring-check`
+and `browser-authoring-media-check`. The existing auth
 throttle also applies to tests: if repeated runs hit429, stop and start a fresh
 session instead of changing the app's limiter. Close the browser with
 `browser_close`, then press Ctrl-C in the session terminal. The process removes
@@ -93,12 +95,39 @@ or live vocabulary mutation in this procedure.
 
 ## Coverage and recorded results
 
-The current automated baseline passes 141 Node tests and 59 browser groups
+The current automated baseline passes 179 Node tests and 93 browser groups
 (portable8, account/training9, import7, media3, polish6, recovery2, follow-up6,
-account management8, lessons6, selection4).
+account management8, lessons6, selection4, authoring9, set creation7, word entry9,
+word media9).
 The source-only install/build and process-restart checks also pass.
 
 Coverage includes:
+
+- Browser creation/selection of native sets, single-word entry and optional
+  picture/recording uploads. Checks cover exact replay after committed-but-lost
+  responses, read-only recovery after successful saves, stale revisions, partial
+  upload reuse, retained filenames, file-size/signature/quota errors and
+  cancellation across target/account changes and cached-page lifecycle events.
+  Synthetic byte readback and 390px RTL/focus checks use the isolated server.
+- Authoring-only personal tokens, password-confirmed issuance with credential/
+  session race guards and shared hashing/failure limits, 90-day expiry, precise
+  revocation results, Basic/Bearer routing and password/secret lifecycle handling.
+- Native-set filtering before pagination, 100-word atomic batches, stale writers,
+  the 2,000-word and 1 MiB limits, deleted IDs, effective browser/API edits and
+  unchanged historical lesson/review behavior.
+- Shared per-owner media byte/count admission across API and Anki, transactional
+  import rollback, last-slot contention, dedup/replay/reads at or above quota, a
+  single owner-usage read per bulk transaction (and none for a commit without new
+  media, checked through a real Anki import commit), the schema7 covering usage
+  index and its row-preserving migration, and invalid option/environment
+  validation before data creation.
+- Private binary uploads, all supported signatures, exact 512 KiB boundary,
+  media kinds/ownership, deduplication, filename/content replay across restart,
+  interrupted/revoked/expired/slow streams and HTTP range reads.
+- The documented Bash workflow creates a set, saves four words, uploads/attaches
+  a picture and downloads identical bytes in a synthetic account. The process
+  restart smoke additionally retains native content/media, all three write
+  receipts and token revocation across actual server processes.
 
 - Salted password hashes, session expiry/revocation, origin/account guards and
   private content/media ownership.
@@ -107,8 +136,8 @@ Coverage includes:
   failure/admission limits. Password drafts clear on pagehide and cached restore;
   lost responses do not retry or update a later account.
 - Meaningful lint negative probes for undefined/unused/shadowed values, consistent
-  Node26 policy, and a pinned least-privilege CI workflow. GitHub execution has
-  not been verified because no push or remote setup is authorized.
+  Node26 policy, and a pinned least-privilege CI workflow. CI execution for the authoring branch
+  has not been run; the recorded authoring checks are local.
 - Browser-local, per-account set selection across reload/login, matching saved
   lesson feedback, unavailable-set fallback and blocked storage.
 - Short due-first lessons, server-timed review intervals/resets, partial saves,

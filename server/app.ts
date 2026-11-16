@@ -1,12 +1,16 @@
 import {createServer, type IncomingMessage, type ServerResponse} from 'node:http';
 import {readFile} from 'node:fs/promises';
-import {dirname, join, resolve} from 'node:path';
+import {dirname, extname, join, resolve} from 'node:path';
 import {Auth, sessionCookie} from './auth';
+import {AccessTokens} from './access-tokens';
+import {Authoring} from './authoring';
 import {AuthLimitError} from './auth-limits';
 import {openDatabase} from './database';
 import {Training} from './training';
 import {ContentRepository} from './content';
 import {Imports} from './imports';
+import {IMPORT_LIMITS} from './import-types';
+import {MediaStorage, validateMediaLimits, type MediaLimits} from './media-storage';
 import {ContentMutations} from './content-mutations';
 import {ApiError, fields, invalid, stringField, type Content} from './types';
 
@@ -18,6 +22,7 @@ export interface ApplicationOptions {
   now?: () => number;
   stagingRoot?: string;
   registration?: 'open' | 'closed';
+  mediaLimits?: MediaLimits;
 }
 
 function mediaResponse(request: IncomingMessage, response: ServerResponse, media: {bytes: Uint8Array; mime: string; size: number} | undefined) {
@@ -55,7 +60,7 @@ function mediaResponse(request: IncomingMessage, response: ServerResponse, media
   response.end(request.method === 'HEAD' ? undefined : bytes.subarray(start, end + 1));
 }
 
-function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+function readBody(request: IncomingMessage, limit = 16384): Promise<Record<string, unknown>> {
   if (request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') throw new ApiError(415, 'unsupported_type', 'Send JSON requests.');
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -69,7 +74,7 @@ function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
     request.on('data', (chunk: Buffer) => {
       if (finished) return;
       size += chunk.length;
-      if (size > 16384) {
+      if (size > limit) {
         finished = true;
         clearTimeout(timer);
         reject(new ApiError(413, 'body_too_large', 'Request is too large.'));
@@ -95,18 +100,62 @@ function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
   });
 }
 
+function readMedia(request: IncomingMessage): Promise<{requestId: string; filename: string; bytes: Buffer}> {
+  const requestId = stringField(request.headers['x-request-id'], 'request ID', 128);
+  const filename = stringField(request.headers['x-media-filename'], 'media filename', 255);
+  if (filename === '.' || filename === '..' || ['/', '\\', ':'].some(part => filename.includes(part)) ||
+    [...filename].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) invalid('Invalid media filename.');
+  if (!['.png', '.jpg', '.jpeg', '.webp', '.mp3', '.wav', '.ogg', '.m4a', '.mp4'].includes(extname(filename).toLowerCase())) throw new ApiError(415, 'unsupported_media', 'Unsupported media filename extension.');
+  if (request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/octet-stream') throw new ApiError(415, 'unsupported_type', 'Send raw media as application/octet-stream.');
+  if (Number(request.headers['content-length']) > IMPORT_LIMITS.mediaBytes) throw new ApiError(413, 'body_too_large', 'Media exceeds the 512 KiB limit.');
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    let finished = false;
+    const chunks: Buffer[] = [];
+    const fail = (error: Error) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      chunks.length = 0;
+      request.resume();
+      reject(error);
+    };
+    const timer = setTimeout(() => fail(new ApiError(408, 'request_timeout', 'Media upload timed out. Try again.')), 15000);
+    request.on('data', (chunk: Buffer) => {
+      if (finished) return;
+      size += chunk.length;
+      if (size > IMPORT_LIMITS.mediaBytes) fail(new ApiError(413, 'body_too_large', 'Media exceeds the 512 KiB limit.'));
+      else chunks.push(chunk);
+    });
+    request.on('error', fail);
+    request.on('aborted', () => fail(new ApiError(400, 'interrupted_request', 'Media upload interrupted.')));
+    request.on('end', () => {
+      clearTimeout(timer);
+      if (finished) return;
+      finished = true;
+      const bytes = Buffer.concat(chunks, size);
+      chunks.length = 0;
+      resolve({requestId, filename, bytes});
+    });
+  });
+}
+
 export function createApplication(options: ApplicationOptions) {
   const registration = options.registration ?? 'closed';
   if (!['open', 'closed'].includes(registration)) throw new Error('REGISTRATION must be open or closed.');
   const origin = new URL(options.origin);
   if (!['http:', 'https:'].includes(origin.protocol) || origin.origin !== options.origin || origin.username || origin.password) throw new Error('APP_ORIGIN must be an HTTP(S) origin without a path.');
+  const mediaLimits = validateMediaLimits(options.mediaLimits);
   const db = openDatabase(options.databasePath);
   const now = options.now || Date.now;
   const auth = new Auth(db, now);
+  const accessTokens = new AccessTokens(db, now);
   const content = new ContentRepository(db, options.content);
+  const mediaStorage = new MediaStorage(db, mediaLimits);
+  const authoring = new Authoring(db, content, now, mediaStorage);
   const training = new Training(db, content, now);
   const contentMutations = new ContentMutations(db, content, now);
-  const imports = new Imports(db, content, options.stagingRoot || join(dirname(options.databasePath), 'import-staging'), now);
+  const imports = new Imports(db, content, options.stagingRoot || join(dirname(options.databasePath), 'import-staging'), now, mediaStorage);
   const webRoot = resolve(__dirname, '../../web');
   const publicFiles: Record<string, [string, string]> = {
     '/': ['index.html', 'text/html; charset=utf-8'],
@@ -141,8 +190,35 @@ export function createApplication(options: ApplicationOptions) {
         return;
       }
       if (!['GET', 'POST', 'HEAD'].includes(method)) throw new ApiError(405, 'method_not_allowed', 'Method not allowed.');
-      if (method === 'POST' && request.headers.origin !== options.origin) throw new ApiError(403, 'invalid_origin', 'Request origin is not allowed.');
       const cookie = request.headers.cookie;
+      const bearer = /^Bearer(?:\s|$)/i.test(request.headers.authorization || '');
+      if (path.startsWith('/api/authoring/')) {
+        if (method === 'POST' && request.headers.origin !== options.origin && (!bearer || request.headers.origin !== undefined)) throw new ApiError(403, 'invalid_origin', 'Request origin is not allowed.');
+        const principal = () => bearer ? accessTokens.bearer(request.headers.authorization) : auth.user(cookie);
+        const user = principal();
+        const expectedUser = request.headers['x-meletio-user'];
+        if (expectedUser !== undefined && expectedUser !== user.id) throw new ApiError(401, 'account_changed', 'Your account changed in another tab. Log in again to continue.');
+        if (path === '/api/authoring/media' && method === 'POST') {
+          const upload = await readMedia(request);
+          if (principal().id !== user.id) throw new ApiError(401, 'account_changed', 'Your account changed. Log in again.');
+          json(response, 201, authoring.upload(user.id, upload.requestId, upload.filename, upload.bytes));
+          return;
+        }
+        const wordsMatch = /^\/api\/authoring\/decks\/([a-zA-Z0-9-]{1,128})\/words$/.exec(path);
+        const body = method === 'POST' ? await readBody(request, wordsMatch ? 1024 * 1024 : 16384) : {};
+        if (method === 'POST' && principal().id !== user.id) throw new ApiError(401, 'account_changed', 'Your account changed. Log in again.');
+        const deckMatch = /^\/api\/authoring\/decks\/([a-zA-Z0-9-]{1,128})$/.exec(path);
+        const mediaMatch = /^\/api\/authoring\/media\/([a-zA-Z0-9-]{1,128})$/.exec(path);
+        if (path === '/api/authoring/decks' && method === 'GET') json(response, 200, authoring.list(user.id, url.searchParams.get('cursor') ?? undefined));
+        else if (path === '/api/authoring/decks' && method === 'POST') json(response, 201, authoring.create(user.id, body));
+        else if (deckMatch && method === 'GET') json(response, 200, authoring.read(user.id, deckMatch[1]));
+        else if (wordsMatch && method === 'POST') json(response, 200, authoring.batch(user.id, wordsMatch[1], body));
+        else if (mediaMatch && ['GET', 'HEAD'].includes(method)) mediaResponse(request, response, content.media(user.id, mediaMatch[1]));
+        else throw new ApiError(404, 'not_found', 'Endpoint not found.');
+        return;
+      }
+      if (bearer) throw new ApiError(401, 'unauthorized', 'Access tokens are only accepted by the authoring API.');
+      if (method === 'POST' && request.headers.origin !== options.origin) throw new ApiError(403, 'invalid_origin', 'Request origin is not allowed.');
       if (path === '/api/auth/config' && method === 'GET') {
         json(response, 200, {registrationOpen: registration === 'open'});
         return;
@@ -173,6 +249,20 @@ export function createApplication(options: ApplicationOptions) {
       const user = auth.user(cookie);
       if (path === '/api/account/password' && method === 'POST') {
         json(response, 200, await auth.changePassword(body, cookie, request.socket.remoteAddress || 'unknown'));
+        return;
+      }
+      if (path === '/api/account/tokens' && method === 'GET') {
+        json(response, 200, {tokens: accessTokens.list(user.id)});
+        return;
+      }
+      if (path === '/api/account/tokens' && method === 'POST') {
+        json(response, 201, await auth.createAccessToken(body, cookie, request.socket.remoteAddress || 'unknown', accessTokens));
+        return;
+      }
+      const tokenMatch = /^\/api\/account\/tokens\/([a-zA-Z0-9-]{1,128})\/revoke$/.exec(path);
+      if (tokenMatch && method === 'POST') {
+        fields(body, []);
+        json(response, 200, accessTokens.revoke(user.id, tokenMatch[1]));
         return;
       }
       const compact = url.searchParams.get('format') === 'compact';

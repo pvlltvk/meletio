@@ -47,6 +47,13 @@ let passwordPending = false;
 let passwordFeedback = '';
 let passwordFailed = false;
 let passwordRevision = 0;
+let tokenPanelOpen = false;
+let accessTokens = [];
+let createdToken = null;
+let tokenPending = false;
+let tokenFeedback = '';
+let tokenFailed = false;
+let tokenRevision = 0;
 let accountEmail = '';
 let catalogLoaded = false;
 let catalogCursor = null;
@@ -67,6 +74,7 @@ let editDraft = null;
 let renameDraft = null;
 let contentError = '';
 let contentPending = null;
+let authoringEditor = null;
 let deleteConfirmation = null;
 let repairDestination = null;
 let importedDeckId = null;
@@ -124,7 +132,9 @@ function clearPractice() {
 
 function clearAccount() {
   generation++;
+  authoringEditor = null;
   clearPasswordForm();
+  clearTokenControls();
   stopAudio();
   clearSearchAnnouncement();
   user = null;
@@ -269,6 +279,73 @@ function clearPasswordForm() {
   passwordFailed = false;
 }
 
+function clearTokenControls() {
+  tokenRevision++;
+  app.querySelector('#token-form')?.reset();
+  app.querySelector('#created-token')?.remove();
+  tokenPanelOpen = false;
+  accessTokens = [];
+  createdToken = null;
+  tokenPending = false;
+  tokenFeedback = '';
+  tokenFailed = false;
+}
+
+function tokenSettings() {
+  const feedback = tokenFeedback ? `<p role="${tokenFailed ? 'alert' : 'status'}" class="${tokenFailed ? 'account-error' : ''}">${escapeHtml(tokenFeedback)}</p>` : '';
+  const secret = createdToken ? `<label for="created-token">New access token</label><textarea id="created-token" readonly autocomplete="off" spellcheck="false">${escapeHtml(createdToken.token)}</textarea><p>Copy this token now. It will not be shown again.</p><button class="text-button" data-token-dismiss="true">Dismiss token</button>` : '';
+  const panel = tokenPanelOpen ? `<div id="token-controls">${feedback}${secret}<form id="token-form" class="content-form"><label for="token-name">Token name</label><input id="token-name" name="name" maxlength="120" autocomplete="off" required><label for="token-current-password">Current password</label><input id="token-current-password" name="currentPassword" type="password" autocomplete="current-password" minlength="12" maxlength="256" required><button class="secondary" type="submit">Create token</button></form><div>${accessTokens.map(value => `<div class="switch-row" data-token-row="${escapeHtml(value.id)}"><span><strong>${escapeHtml(value.name)}</strong><small>Expires ${escapeHtml(new Date(value.expiresAt).toLocaleDateString())}</small></span><button class="text-button" data-token-revoke="${escapeHtml(value.id)}">Revoke</button></div>`).join('')}</div><button class="text-button" data-tokens-close="true">Close token controls</button></div>` : '<button class="secondary" data-tokens-open="true">Manage access tokens</button>';
+  return `<section class="settings-card" aria-labelledby="access-token-title"><h2 id="access-token-title">Access tokens</h2><p>Let scripts add vocabulary to your account. Tokens expire after 90 days. Changing your password revokes all tokens.</p>${panel}</section>`;
+}
+
+async function manageTokens(action, form, id) {
+  if (tokenPending || !user) return;
+  const current = generation;
+  const revision = ++tokenRevision;
+  const name = form?.elements.name.value;
+  const currentPassword = form?.elements.currentPassword.value;
+  form?.reset();
+  createdToken = null;
+  tokenPanelOpen = true;
+  tokenPending = true;
+  tokenFeedback = action === 'list' ? 'Loading tokens…' : 'Saving…';
+  tokenFailed = false;
+  render();
+  try {
+    if (action === 'create') {
+      const result = await request('/api/account/tokens', {name, currentPassword});
+      if (current !== generation || revision !== tokenRevision) return;
+      createdToken = result;
+      accessTokens = [...accessTokens, {id: result.id, name: result.name, createdAt: result.createdAt, expiresAt: result.expiresAt}];
+      tokenFeedback = 'Token created.';
+    } else if (action === 'revoke') {
+      const result = await request(`/api/account/tokens/${encodeURIComponent(id)}/revoke`, {});
+      if (current !== generation || revision !== tokenRevision) return;
+      accessTokens = accessTokens.filter(value => value.id !== id);
+      tokenFeedback = result.revoked ? 'Token revoked.' : 'Token already inactive.';
+    } else {
+      const result = await request('/api/account/tokens');
+      if (current !== generation || revision !== tokenRevision) return;
+      accessTokens = result.tokens;
+      tokenFeedback = accessTokens.length ? '' : 'No active tokens.';
+    }
+  } catch (error) {
+    if (current !== generation || revision !== tokenRevision) return;
+    if (error.status === 401) { clearAccount(); authError = 'Your session ended. Log in to continue.'; }
+    else {
+      tokenFailed = true;
+      tokenFeedback = action === 'create' && (!error.status || error.status >= 500)
+        ? 'Token creation could not be confirmed. Close and reopen token controls, revoke the named token if listed, then create another.' : error.message;
+    }
+  } finally {
+    if (current === generation && revision === tokenRevision) {
+      tokenPending = false;
+      render();
+      app.querySelector(createdToken ? '#created-token' : '#token-name')?.focus();
+    } else if (!user) render();
+  }
+}
+
 function accountSettings() {
   const feedback = `<p id="password-feedback" class="${passwordFailed ? 'account-error' : 'password-status'}" role="${passwordFailed ? 'alert' : 'status'}">${escapeHtml(passwordFeedback)}</p>`;
   const form = passwordFormOpen ? `<form id="password-form" class="content-form"><label for="current-password">Current password</label><input id="current-password" name="currentPassword" type="password" autocomplete="current-password" minlength="12" maxlength="256" required><label for="new-password">New password</label><input id="new-password" name="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required aria-describedby="new-password-help"><p id="new-password-help">Use at least 12 characters.</p><label for="confirm-password">Confirm new password</label><input id="confirm-password" name="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required>${feedback}<div class="content-actions"><button class="primary" type="submit">${passwordPending ? 'Saving…' : 'Save password'}</button><button class="secondary" type="button" data-password-cancel="true">Cancel</button></div></form>` : `${feedback}<button class="secondary" data-change-password="true">Change password</button>`;
@@ -300,6 +377,7 @@ async function savePassword(form) {
     if (result.changed !== true) throw new Error('Unconfirmed password change.');
     passwordFormOpen = false;
     passwordFeedback = 'Password changed. Other sessions signed out.';
+    clearTokenControls();
   } catch (error) {
     if (current !== generation || revision !== passwordRevision) return;
     if (error.status === 401) { clearAccount(); authError = 'Your session ended. Log in to continue.'; }
@@ -333,9 +411,11 @@ function updateControls() {
     app.prepend(panel);
   }
   app.querySelectorAll('button, input, select').forEach(control => {
-    control.disabled = Boolean(busy || failedOperation || importBusy) && !(importBusy && control.id === 'import-file') && !control.hasAttribute('data-retry') && !control.hasAttribute('data-reload') && !(importBusy && (control.hasAttribute('data-import-cancel') || control.hasAttribute('data-import-recover')));
+    control.disabled = Boolean(busy || failedOperation || importBusy || authoringEditor?.busy) && !(importBusy && control.id === 'import-file') && !control.hasAttribute('data-retry') && !control.hasAttribute('data-reload') && !(importBusy && (control.hasAttribute('data-import-cancel') || control.hasAttribute('data-import-recover'))) && !(authoringEditor?.busy && (control.hasAttribute('data-authoring-cancel') || control.hasAttribute('data-authoring-discard') || control.hasAttribute('data-authoring-keep') || control.hasAttribute('data-logout')));
   });
+  if (authoringEditor?.operation) app.querySelectorAll('.authoring-card input,.authoring-card select,.authoring-card button[type="submit"],[data-authoring-remove]').forEach(control => { control.disabled = true; });
   if (passwordPending) app.querySelectorAll('#password-form button,#password-form input').forEach(control => { control.disabled = true; });
+  if (tokenPending) app.querySelectorAll('#token-controls button,#token-controls input').forEach(control => { control.disabled = true; });
 }
 
 function savedLearningSet() {
@@ -356,7 +436,9 @@ function rememberLearningSet(id) {
 }
 
 async function loadPractice(nextScreen = 'study') {
+  authoringEditor = null;
   clearPasswordForm();
+  clearTokenControls();
   stopAudio();
   clearSearchAnnouncement();
   const current = ++generation;
@@ -684,7 +766,171 @@ function study() {
 }
 
 function emptyLearningSets(active) {
-  app.innerHTML = chrome(`<section class="intro"><h1>${active === 'vocabulary' ? 'Vocabulary' : 'Study'}</h1></section><section class="hero"><div class="hero-copy"><h2>No learning sets yet</h2><p>Import an Anki file to add your vocabulary.</p><button class="primary" data-screen="settings">Import vocabulary ${icon('arrow')}</button></div></section>`, active);
+  app.innerHTML = chrome(`<section class="intro"><h1>${active === 'vocabulary' ? 'Vocabulary' : 'Study'}</h1></section><section class="hero"><div class="hero-copy"><h2>No learning sets yet</h2><p>${serverBacked ? 'Create a learning set or import an Anki file to add your vocabulary.' : 'Import an Anki file to add your vocabulary.'}</p>${serverBacked ? '<button class="primary" data-create-set="true">Create learning set</button>' : ''}<button class="${serverBacked ? 'text-button' : 'primary'}" data-screen="settings">Import vocabulary ${icon('arrow')}</button></div></section>`, active);
+}
+
+function openSetEditor() {
+  if (!user || !deckLoaded) return;
+  stopAudio();
+  clearPasswordForm();
+  clearTokenControls();
+  authoringEditor = {kind: 'set', draft: {title: '', termLang: deck?.termLang || '', meaningLang: deck?.meaningLang || data.uiLanguage,
+    termDir: deck?.termDir || 'ltr', meaningDir: deck?.meaningDir || 'ltr'}, operation: null, busy: false, error: '', discard: null};
+  render();
+  app.querySelector('#create-set-form [name=title]')?.focus();
+}
+
+function openWordEditor() {
+  if (!user || !deckLoaded || !deck?.authored) return;
+  stopAudio();
+  authoringEditor = {kind: 'word', deckId: deck.id, revision: deck.revision,
+    draft: {term: '', meaning: ''}, media: {image: null, audio: null}, operation: null, busy: false, error: '', discard: null};
+  render();
+  app.querySelector('#add-word-form [name=term]')?.focus();
+}
+
+function closeAuthoringEditor(nextScreen = screen) {
+  if (authoringEditor?.operation) {
+    authoringEditor.discard = nextScreen;
+    render();
+    app.querySelector('[data-authoring-discard]')?.focus();
+    return;
+  }
+  authoringEditor = null;
+  screen = nextScreen;
+  render();
+  focusHeading();
+}
+
+function readAuthoringDraft(form) {
+  if (!authoringEditor || authoringEditor.operation) return;
+  const names = authoringEditor.kind === 'word' ? ['term', 'meaning'] : ['title', 'termLang', 'meaningLang', 'termDir', 'meaningDir'];
+  for (const name of names) authoringEditor.draft[name] = form.elements[name].value;
+}
+
+function chooseAuthoringFile(kind, file) {
+  const state = authoringEditor;
+  if (state?.kind !== 'word' || state.operation || state.busy) return;
+  const extension = file?.name.match(/\.[^.]+$/)?.[0].toLowerCase();
+  const supported = kind === 'image' ? ['.png', '.jpg', '.jpeg', '.webp'] : ['.mp3', '.wav', '.ogg', '.m4a', '.mp4'];
+  const error = !file ? '' : file.size > 512 * 1024 ? 'Pictures and recordings must be 512 KiB or smaller.'
+    : !supported.includes(extension) ? `Choose a supported ${kind === 'image' ? 'picture' : 'recording'} file.` : '';
+  const filename = file && /^[\x20-\x7e]{1,255}$/.test(file.name) && !/[\\/:]/.test(file.name) ? file.name : `${kind}${extension}`;
+  state.media[kind] = file ? {file, filename, requestId: operationId(), id: null, error} : null;
+  state.error = '';
+  render();
+  app.querySelector(`[data-authoring-remove="${kind}"]`)?.focus();
+}
+
+function authoringFiles(state) {
+  return `<p>Optional pictures and human recordings: up to 512 KiB each. Uploaded files are kept if you cancel a save.</p>${[['image', 'Picture', '.png,.jpg,.jpeg,.webp'], ['audio', 'Recording', '.mp3,.wav,.ogg,.m4a,.mp4']].map(([kind, label, accept]) => `<div class="authoring-file"><label for="word-${kind}-file">${label} (optional)<input id="word-${kind}-file" type="file" accept="${accept}"></label>${state.media[kind] ? `<p>${escapeHtml(state.media[kind].file.name)}</p>${state.media[kind].error ? `<p class="account-error" role="alert">${escapeHtml(state.media[kind].error)}</p>` : ''}<button type="button" class="text-button" data-authoring-remove="${kind}">Remove ${label.toLowerCase()}</button>` : ''}</div>`).join('')}`;
+}
+
+function authoringView() {
+  const state = authoringEditor;
+  const draft = state.draft;
+  const addingWord = state.kind === 'word';
+  const direction = (name, title) => `<label>${title}<select name="${name}"><option value="ltr" ${draft[name] === 'ltr' ? 'selected' : ''}>Left to right</option><option value="rtl" ${draft[name] === 'rtl' ? 'selected' : ''}>Right to left</option></select></label>`;
+  const fields = addingWord
+    ? `<label>Word<input name="term" maxlength="4000" required lang="${escapeHtml(deck.termLang)}" dir="${safeDirection(deck.termDir)}" value="${escapeHtml(draft.term)}"></label><label>Translation<input name="meaning" maxlength="4000" required lang="${escapeHtml(deck.meaningLang)}" dir="${safeDirection(deck.meaningDir)}" value="${escapeHtml(draft.meaning)}"></label>${authoringFiles(state)}`
+    : `<label>Set name<input name="title" maxlength="240" required value="${escapeHtml(draft.title)}"></label><div class="import-language-pair"><label>Word language code<input name="termLang" maxlength="64" required value="${escapeHtml(draft.termLang)}"></label><label>Translation language code<input name="meaningLang" maxlength="64" required value="${escapeHtml(draft.meaningLang)}"></label>${direction('termDir', 'Word direction')}${direction('meaningDir', 'Translation direction')}</div>`;
+  const confirmation = state.discard ? '<section class="confirmation" role="alert"><p>This save may already have completed. Check your learning set before adding it again. Leave the editor?</p><div class="content-actions"><button type="button" class="primary" data-authoring-discard="true">Leave editor</button><button type="button" class="secondary" data-authoring-keep="true">Keep editing</button></div></section>' : '';
+  app.innerHTML = chrome(`<section class="intro"><h1>${addingWord ? 'Add word' : 'Create learning set'}</h1><p>${addingWord ? escapeHtml(deck.title) : 'Choose the languages before adding your words. Languages and text directions are fixed after creation.'}</p></section><section class="settings-card authoring-card"><form id="${addingWord ? 'add-word-form' : 'create-set-form'}" class="content-form">${fields}${state.error ? `<p class="account-error" role="alert">${escapeHtml(state.error)}</p>` : ''}${state.busy ? '<p role="status">Saving…</p>' : ''}<div class="content-actions">${state.operation ? state.error && !state.busy ? '<button type="button" class="primary" data-authoring-retry="true">Retry save</button>' : '' : `<button class="primary" type="submit">${addingWord ? 'Save word' : 'Create learning set'}</button>`}<button class="secondary" type="button" data-authoring-cancel="true">Cancel</button></div></form>${confirmation}</section>`, screen === 'settings' ? 'settings' : 'vocabulary');
+}
+
+async function refreshAuthoringRevision(state, active) {
+  const content = await request(`/api/decks/${encodeURIComponent(state.deckId)}`);
+  if (!active()) return;
+  deck = content.deck;
+  const summary = decks.find(item => item.id === deck.id);
+  if (summary) Object.assign(summary, {title: deck.title, revision: deck.revision, wordCount: deck.words.length});
+  state.revision = deck.revision;
+  state.operation = null;
+  state.error = 'This set changed in another tab. Your draft is kept. Review it and save again.';
+}
+
+async function saveAuthoredContent(form) {
+  const state = authoringEditor;
+  if (!state || state.busy || !user || busy || importBusy || failedOperation) return;
+  if (form) readAuthoringDraft(form);
+  if (state.kind === 'word' && !state.operation) {
+    const invalidFile = Object.values(state.media).find(media => media?.error);
+    if (invalidFile) { state.error = 'Remove or replace the invalid file before saving.'; render(); return; }
+  }
+  const current = generation;
+  const ownerId = user.id;
+  const active = () => authoringEditor === state && current === generation && user?.id === ownerId && (state.kind !== 'word' || deck?.id === state.deckId);
+  state.operation ??= {path: state.kind === 'word' ? `/api/authoring/decks/${encodeURIComponent(state.deckId)}/words` : '/api/authoring/decks',
+    body: state.kind === 'word' ? {revision: state.revision, words: [{...state.draft}], requestId: operationId()} : {...state.draft, requestId: operationId()},
+    media: state.kind === 'word' ? Object.entries(state.media).filter(([_kind, media]) => media) : [], result: null};
+  const operation = state.operation;
+  state.busy = true;
+  state.error = '';
+  render();
+  try {
+    if (operation.conflict) {
+      await refreshAuthoringRevision(state, active);
+      return;
+    }
+    if (!operation.result) {
+      for (const [kind, media] of operation.media) {
+        if (!media.id) {
+          const uploaded = await request('/api/authoring/media', media.file, {binary: true,
+            headers: {'X-Request-Id': media.requestId, 'X-Media-Filename': media.filename}});
+          if (!active()) return;
+          if (!uploaded.id || uploaded.kind !== kind) throw new Error('The upload result could not be confirmed.');
+          media.id = uploaded.id;
+        }
+        operation.body.words[0][`${kind}MediaId`] = media.id;
+      }
+      const result = await request(operation.path, operation.body);
+      if (!active()) return;
+      if (state.kind === 'word' ? result.deckId !== state.deckId || !result.words?.length : !result.deck?.id) throw new Error('The save result could not be confirmed.');
+      operation.result = result;
+    }
+    const catalog = await request('/api/decks');
+    if (!active()) return;
+    const content = await request(`/api/decks/${encodeURIComponent(state.kind === 'word' ? state.deckId : operation.result.deck.id)}`);
+    if (!active()) return;
+    const training = await request(`/api/training?deckId=${encodeURIComponent(content.deck.id)}&format=compact`);
+    if (!active()) return;
+    if (state.kind === 'set') clearPractice();
+    else searchQuery = '';
+    decks.splice(0, decks.length, ...catalog.decks);
+    catalogCursor = catalog.nextCursor;
+    catalogLoaded = true;
+    deck = content.deck;
+    if (!decks.some(item => item.id === deck.id)) decks.push({...deck, words: undefined, wordCount: deck.words.length});
+    review = training.review;
+    reviewLoadedAt = performance.now();
+    lastSession = training.latestResult;
+    rememberLearningSet(deck.id);
+    authoringEditor = null;
+    screen = 'vocabulary';
+    render();
+    focusHeading();
+    announce(state.kind === 'word' ? 'Word saved.' : 'Learning set created.');
+  } catch (error) {
+    if (!active()) return;
+    if (error.status === 401) { clearAccount(); authError = 'Your session ended. Log in to continue.'; }
+    else if (operation.result) state.error = 'Your changes were saved, but could not be loaded. Retry to load them.';
+    else if (state.kind === 'word' && error.code === 'stale_content') {
+      operation.conflict = true;
+      state.error = 'This set changed, but could not be reloaded. Your draft is kept. Retry to reload it.';
+      try { await refreshAuthoringRevision(state, active); }
+      catch (refreshError) {
+        if (active() && refreshError.status === 401) { clearAccount(); authError = 'Your session ended. Log in to continue.'; }
+      }
+    } else if (operation.conflict) state.error = 'This set changed, but could not be reloaded. Your draft is kept. Retry to reload it.';
+    else if (!error.status || error.status >= 500) state.error = 'The save could not be confirmed. Retry this save to check it without adding it again.';
+    else { state.error = error.message; state.operation = null; }
+  } finally {
+    if (active()) {
+      state.busy = false;
+      render();
+      app.querySelector(state.operation ? '[data-authoring-retry]' : '.authoring-card input')?.focus();
+    } else if (!user) render();
+  }
 }
 
 function filterWords(query) {
@@ -702,7 +948,7 @@ function clearSearchAnnouncement() {
 
 function updateWordList({announceCount = false} = {}) {
   const matches = filterWords(searchQuery);
-  document.querySelector('#word-grid').innerHTML = matches.length ? matches.map(wordCard).join('') : terms().length ? '<p class="empty">No words found. Try another search.</p>' : '<p class="empty">This set has no words. Import an Anki export to add vocabulary.</p>';
+  document.querySelector('#word-grid').innerHTML = matches.length ? matches.map(wordCard).join('') : terms().length ? '<p class="empty">No words found. Try another search.</p>' : deck.authored ? '<p class="empty">This set has no words yet. Add a word to begin.</p>' : '<p class="empty">This set has no words. Import an Anki export to add vocabulary.</p>';
   clearTimeout(searchTimer);
   if (announceCount) {
     searchTimer = setTimeout(() => announce(matches.length ? `${matches.length} words found.` : 'No words found.'), 350);
@@ -711,7 +957,7 @@ function updateWordList({announceCount = false} = {}) {
 
 function vocabulary() {
   if (!deck) { emptyLearningSets('vocabulary'); return; }
-  app.innerHTML = chrome(`<section class="intro"><h1>Vocabulary</h1><p>${terms().length} words in ${escapeHtml(deck.title)}.</p></section><label class="eyebrow" for="search">Search ${escapeHtml(langName(deck.termLang))} or ${escapeHtml(langName(deck.meaningLang))}</label><input id="search" class="search" type="search" placeholder="Find a word…" autocomplete="off" value="${escapeHtml(searchQuery)}"><div id="word-grid" class="vocabulary-grid"></div>`, 'vocabulary');
+  app.innerHTML = chrome(`<section class="intro"><h1>Vocabulary</h1><p>${terms().length} words in ${escapeHtml(deck.title)}.</p>${serverBacked && deck.authored ? '<button class="secondary" data-add-word="true">Add word</button>' : ''}</section><label class="eyebrow" for="search">Search ${escapeHtml(langName(deck.termLang))} or ${escapeHtml(langName(deck.meaningLang))}</label><input id="search" class="search" type="search" placeholder="Find a word…" autocomplete="off" value="${escapeHtml(searchQuery)}"><div id="word-grid" class="vocabulary-grid"></div>`, 'vocabulary');
   updateWordList();
 }
 
@@ -1145,19 +1391,21 @@ function importSettings() {
 
 function settings() {
   const management = serverBacked && deck?.editable ? `<section class="settings-card"><h2>Manage ${escapeHtml(deck.title)}</h2>${renameDraft !== null ? `<form id="deck-rename-form" class="content-form"><label>Set name<input name="title" maxlength="120" required value="${escapeHtml(renameDraft)}"></label>${contentFeedback()}<div class="content-actions"><button class="primary" type="submit">Save name</button><button class="secondary" type="button" data-rename-cancel="true">Cancel</button></div></form>` : `<div class="content-actions"><button class="secondary" data-rename-set="true">Rename set</button>${deck.imported ? '<button class="text-button" data-restore-media="true">Restore missing media</button>' : ''}<button class="text-button danger" data-delete-set="true">Delete set</button></div>${contentFeedback()}`}${deleteConfirmation === 'set' ? `<section class="confirmation" role="alert"><p>Delete “${escapeHtml(deck.title)}” from your learning sets? Your practice history${deck.imported ? ' and Anki export are' : ' is'} kept.</p><div class="content-actions"><button class="primary danger-fill" data-confirm-delete-set="true">Delete set</button><button class="secondary" data-keep="true">Keep set</button></div></section>` : ''}</section>` : '';
-  app.innerHTML = chrome(`<section class="intro"><h1>Settings</h1></section><div class="settings-stack"><section class="settings-card"><h2 id="learning-set-label">Learning set</h2>${!decks.length ? '<p>No learning sets yet. Import an Anki file below.</p>' : ''}<div class="deck-options" role="radiogroup" aria-labelledby="learning-set-label">${decks.map(option => `<label class="deck-option ${option.id === deck?.id ? 'selected' : ''}"><input type="radio" name="learning-set" value="${escapeHtml(option.id)}" ${option.id === deck?.id ? 'checked' : ''}><span><strong>${escapeHtml(option.title)}</strong><small>${escapeHtml(langName(option.termLang))} → ${escapeHtml(langName(option.meaningLang))}${!option.imported ? ' · Default' : ''}</small></span></label>`).join('')}</div>${serverBacked && catalogCursor ? '<button class="text-button" data-catalog-more="true">Load more learning sets</button>' : ''}</section>${management}${serverBacked ? accountSettings() : ''}<section class="settings-card"><h2>Pronunciation</h2><label class="switch-row" for="auto-pronounce"><span><strong>Play after I answer</strong></span><input id="auto-pronounce" type="checkbox" role="switch" ${autoPronounce ? 'checked' : ''}></label>${storageAvailable ? '' : '<p class="storage-note">This choice lasts for this visit.</p>'}</section>${serverBacked ? importSettings() : ''}${serverBacked ? '' : '<p class="settings-footnote">Practice resets when this preview reloads.</p>'}</div>`, 'settings');
+  app.innerHTML = chrome(`<section class="intro"><h1>Settings</h1></section><div class="settings-stack"><section class="settings-card"><h2 id="learning-set-label">Learning set</h2>${!decks.length ? '<p>No learning sets yet. Import an Anki file below.</p>' : ''}<div class="deck-options" role="radiogroup" aria-labelledby="learning-set-label">${decks.map(option => `<label class="deck-option ${option.id === deck?.id ? 'selected' : ''}"><input type="radio" name="learning-set" value="${escapeHtml(option.id)}" ${option.id === deck?.id ? 'checked' : ''}><span><strong>${escapeHtml(option.title)}</strong><small>${escapeHtml(langName(option.termLang))} → ${escapeHtml(langName(option.meaningLang))}${!option.imported && !option.authored ? ' · Default' : ''}</small></span></label>`).join('')}</div>${serverBacked && catalogCursor ? '<button class="text-button" data-catalog-more="true">Load more learning sets</button>' : ''}${serverBacked ? '<button class="secondary" data-create-set="true">Create learning set</button>' : ''}</section>${management}${serverBacked ? accountSettings() + tokenSettings() : ''}<section class="settings-card"><h2>Pronunciation</h2><label class="switch-row" for="auto-pronounce"><span><strong>Play after I answer</strong></span><input id="auto-pronounce" type="checkbox" role="switch" ${autoPronounce ? 'checked' : ''}></label>${storageAvailable ? '' : '<p class="storage-note">This choice lasts for this visit.</p>'}</section>${serverBacked ? importSettings() : ''}${serverBacked ? '' : '<p class="settings-footnote">Practice resets when this preview reloads.</p>'}</div>`, 'settings');
 }
 
 function render() {
   clearTimeout(reviewTimer);
   if (!user || screen !== 'settings') clearPasswordForm();
+  if (!user || screen !== 'settings') clearTokenControls();
   if (serverBacked && (!accountLoaded || !user || !deckLoaded)) {
     accountView();
     updateControls();
     return;
   }
   if (!deck && !['study', 'vocabulary', 'settings'].includes(screen)) screen = 'study';
-  if (screen === 'study') study();
+  if (authoringEditor) authoringView();
+  else if (screen === 'study') study();
   else if (screen === 'vocabulary') vocabulary();
   else if (screen === 'detail') detail(selectedWord);
   else if (screen === 'practice') practice();
@@ -1165,13 +1413,14 @@ function render() {
   else if (screen === 'settings') settings();
   updateControls();
   prepareVisibleAudio();
-  if (serverBacked && user && screen === 'study' && !busy && !failedOperation && !document.hidden && review && review.nextDue !== null && review.nextDue > review.asOf) {
-    reviewTimer = setTimeout(() => { if (!busy && !failedOperation && screen === 'study') refreshStudy(); }, Math.min(Math.max(1000, review.nextDue - review.asOf - (performance.now() - reviewLoadedAt)), 2147483647));
+  if (serverBacked && user && screen === 'study' && !authoringEditor && !busy && !failedOperation && !document.hidden && review && review.nextDue !== null && review.nextDue > review.asOf) {
+    reviewTimer = setTimeout(() => { if (!authoringEditor && !busy && !failedOperation && screen === 'study') refreshStudy(); }, Math.min(Math.max(1000, review.nextDue - review.asOf - (performance.now() - reviewLoadedAt)), 2147483647));
   }
 }
 
 let selectedWord;
 app.addEventListener('input', event => {
+  if (event.target.closest('#create-set-form,#add-word-form')) { readAuthoringDraft(event.target.form); return; }
   if (event.target.closest('#word-edit-form') && editDraft) { editDraft = {term: app.querySelector('[name=term]').value, meaning: app.querySelector('[name=meaning]').value}; }
   if (event.target.closest('#deck-rename-form')) renameDraft = event.target.value;
   if (serverBacked && event.target.closest('#import-mapping')) { readImportDraft(); invalidateImportPreview(); }
@@ -1182,6 +1431,11 @@ app.addEventListener('input', event => {
 });
 
 app.addEventListener('change', event => {
+  if (['word-image-file', 'word-audio-file'].includes(event.target.id)) {
+    chooseAuthoringFile(event.target.id === 'word-image-file' ? 'image' : 'audio', event.target.files[0]);
+    return;
+  }
+  if (event.target.closest('#create-set-form,#add-word-form')) { readAuthoringDraft(event.target.form); return; }
   if (serverBacked && event.target.id === 'import-file' && !busy && !failedOperation) { chooseImportFile(event.target.files[0]); return; }
   if (serverBacked && (busy || failedOperation || importBusy)) return;
   if (serverBacked && event.target.id === 'import-accept-skipped') { importCommit = null; return; }
@@ -1207,6 +1461,7 @@ app.addEventListener('change', event => {
     return;
   }
   if (event.target.name === 'learning-set') {
+    authoringEditor = null;
     stopAudio();
     editDraft = null; renameDraft = null; deleteConfirmation = null; contentError = ''; contentPending = null;
     if (serverBacked) {
@@ -1244,6 +1499,17 @@ app.addEventListener('click', event => {
   const button = event.target.closest('button');
   if (!button) return;
   if (serverBacked) {
+    if (button.dataset.authoringCancel) { closeAuthoringEditor(); return; }
+    if (button.dataset.authoringDiscard) {
+      const nextScreen = authoringEditor?.discard || screen;
+      authoringEditor = null;
+      screen = nextScreen;
+      render();
+      focusHeading();
+      return;
+    }
+    if (button.dataset.authoringKeep) { if (authoringEditor) authoringEditor.discard = null; render(); return; }
+    if (authoringEditor?.busy && !button.dataset.logout) return;
     if (button.dataset.importCancel) { cancelImport(); return; }
     if (button.dataset.importRecover) { recoverImport(); return; }
     if (busy || importBusy) return;
@@ -1257,6 +1523,19 @@ app.addEventListener('click', event => {
       return;
     }
     if (failedOperation) return;
+    if (button.dataset.authoringRetry) { saveAuthoredContent(); return; }
+    if (button.dataset.authoringRemove && authoringEditor?.kind === 'word' && !authoringEditor.operation) {
+      chooseAuthoringFile(button.dataset.authoringRemove);
+      app.querySelector(`#word-${button.dataset.authoringRemove}-file`)?.focus();
+      return;
+    }
+    if (button.dataset.createSet) { openSetEditor(); return; }
+    if (button.dataset.addWord) { openWordEditor(); return; }
+    if (authoringEditor && button.dataset.screen) { closeAuthoringEditor(button.dataset.screen); return; }
+    if (button.dataset.tokensOpen && user) { manageTokens('list'); return; }
+    if (button.dataset.tokensClose) { clearTokenControls(); render(); return; }
+    if (button.dataset.tokenDismiss) { createdToken = null; render(); return; }
+    if (button.dataset.tokenRevoke) { manageTokens('revoke', undefined, button.dataset.tokenRevoke); return; }
     if (button.dataset.changePassword && user) { clearPasswordForm(); passwordFormOpen = true; render(); app.querySelector('#current-password')?.focus(); return; }
     if (button.dataset.passwordCancel) { clearPasswordForm(); render(); app.querySelector('[data-change-password]')?.focus(); return; }
     if (button.dataset.editWord) { stopAudio(); editDraft = {term: selectedWord.term, meaning: selectedWord.meaning}; contentError = ''; render(); app.querySelector('[name=term]')?.focus(); return; }
@@ -1288,6 +1567,7 @@ app.addEventListener('click', event => {
       return;
     }
     if (button.dataset.logout) {
+      authoringEditor = null;
       clearPasswordForm();
       stopAudio();
       runOperation({path: '/api/auth/logout', body: {}, accept: () => clearAccount()});
@@ -1406,6 +1686,8 @@ app.addEventListener('click', event => {
 });
 
 app.addEventListener('submit', async event => {
+  if (['create-set-form', 'add-word-form'].includes(event.target.id)) { event.preventDefault(); saveAuthoredContent(event.target); return; }
+  if (event.target.id === 'token-form') { event.preventDefault(); manageTokens('create', event.target); return; }
   if (event.target.id === 'password-form') { event.preventDefault(); savePassword(event.target); return; }
   if (event.target.id === 'word-edit-form') { event.preventDefault(); mutateContent('word-edit', editDraft); return; }
   if (event.target.id === 'deck-rename-form') { event.preventDefault(); mutateContent('rename', {title: renameDraft}); return; }
@@ -1447,18 +1729,22 @@ let noticeRevision = 0;
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { stopAudio(); clearTimeout(reviewTimer); }
-  else if (serverBacked && user && screen === 'study' && !busy && !failedOperation) refreshStudy();
+  else if (serverBacked && user && screen === 'study' && !authoringEditor && !busy && !failedOperation) refreshStudy();
 });
 window.addEventListener('pagehide', () => {
+  authoringEditor = null;
   clearTimeout(reviewTimer);
   stopAudio();
   clearPasswordForm();
+  clearTokenControls();
   const loginPassword = app.querySelector('#account-password');
   if (loginPassword) loginPassword.value = '';
 });
 window.addEventListener('pageshow', event => {
   if (event.persisted) {
+    authoringEditor = null;
     clearPasswordForm();
+    clearTokenControls();
     if (serverBacked && user && screen === 'study' && !busy && !failedOperation) refreshStudy();
     else render();
   }

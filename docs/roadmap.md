@@ -13,24 +13,27 @@ See the [README](../README.md) for what works today and
 Early development, version 0.1. The app runs locally and on a home network. It
 is not yet ready to be exposed to the internet; milestone 4 covers that.
 
-## Planned
+## Implemented
 
 ### 1. Authoring API
 
-Create learning sets, add or update words in batches, and upload a picture and a
-recording for each word, from scripts and AI agents.
+Create native learning sets, add or update words in batches, and upload pictures
+and recordings from scripts and agents. See the [API reference](api.md).
 
 - Personal access tokens, created and revoked in Settings, stored hashed and
   scoped to one account. The browser session cookie and Origin check do not suit
   non-browser clients.
 - Uploads keep the media limits and file-signature checks used by the Anki import.
+  Shared account byte/count quotas apply to API uploads and Anki imports.
 - Writes are idempotent by request ID, so a retried call does not duplicate words.
-- Reference and examples in `docs/api.md`.
 
 ### 2. Authoring in the app
 
 Create sets and add words in the browser, using the same endpoints. Vocabulary
-no longer depends on Anki desktop.
+no longer depends on Anki desktop. New words can include a picture and a human
+recording; interrupted saves have explicit retries.
+
+## Planned
 
 ### 3. Recall practice
 

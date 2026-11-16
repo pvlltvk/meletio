@@ -2,6 +2,7 @@ import {resolve} from 'node:path';
 import {isIP} from 'node:net';
 import {prepare} from '../scripts/prepare';
 import {createApplication} from './app';
+import {defaultMediaLimits, validateMediaLimits} from './media-storage';
 
 async function main() {
   const host = process.env.HOST || '127.0.0.1';
@@ -12,10 +13,14 @@ async function main() {
   if (!['true', 'false'].includes(secure)) throw new Error('SECURE_COOKIES must be true or false.');
   const registration = process.env.REGISTRATION ?? 'closed';
   if (registration !== 'open' && registration !== 'closed') throw new Error('REGISTRATION must be open or closed.');
+  const mediaLimits = validateMediaLimits({
+    bytes: process.env.MEDIA_MAX_BYTES === undefined ? defaultMediaLimits.bytes : Number(process.env.MEDIA_MAX_BYTES),
+    files: process.env.MEDIA_MAX_FILES === undefined ? defaultMediaLimits.files : Number(process.env.MEDIA_MAX_FILES)
+  });
   const defaultHost = host.includes(':') ? `[${host}]` : host;
   const origin = process.env.APP_ORIGIN || `http://${defaultHost}:${port}`;
   const content = prepare(resolve(__dirname, '../..'));
-  const application = createApplication({databasePath: resolve(process.env.DATABASE_PATH || 'data/meletio.sqlite'), content, origin, secureCookies: secure === 'true', registration});
+  const application = createApplication({databasePath: resolve(process.env.DATABASE_PATH || 'data/meletio.sqlite'), content, origin, secureCookies: secure === 'true', registration, mediaLimits});
   application.server.on('error', error => {
     console.error('Server failed:', error.message);
     void application.close().finally(() => { process.exitCode = 1; });

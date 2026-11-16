@@ -13,6 +13,7 @@ interface ImportedDeck {
   meaning_dir: string;
   revision: number;
   word_count?: number;
+  kind?: string;
 }
 
 interface ImportedWord {
@@ -26,14 +27,14 @@ interface ImportedWord {
 function metadata(row: ImportedDeck): DeckMetadata {
   return {id: row.id, title: row.title, termLang: row.term_lang, meaningLang: row.meaning_lang,
     termDir: row.term_dir, meaningDir: row.meaning_dir, wordCount: row.word_count || 0,
-    revision: row.revision, imported: true, editable: true};
+    revision: row.revision, imported: row.kind !== 'authored', editable: true, ...(row.kind === 'authored' ? {authored: true} : {})};
 }
 
 export function deckMetadata(deck: Deck): DeckMetadata {
-  const details = deck as Deck & {revision?: number; imported?: boolean; editable?: boolean};
+  const details = deck as Deck & {revision?: number; imported?: boolean; editable?: boolean; authored?: boolean};
   return {id: deck.id, title: deck.title, termLang: deck.termLang, meaningLang: deck.meaningLang,
     termDir: deck.termDir, meaningDir: deck.meaningDir, wordCount: deck.words.length,
-    revision: details.revision || 1, imported: details.imported || false, editable: details.editable || false};
+    revision: details.revision || 1, imported: details.imported || false, editable: details.editable || false, ...(details.authored ? {authored: true} : {})};
 }
 
 function cursorKey(cursor: string | undefined): string {
@@ -62,16 +63,17 @@ export class ContentRepository {
     return {...deck, ...deckMetadata(deck), revision: override?.revision || 1, imported: false, editable: true} as Deck;
   }
 
-  list(userId: string, cursor?: string) {
+  list(userId: string, cursor?: string, authoredOnly = false) {
     const after = cursorKey(cursor);
-    const demos = this.demo.decks.flatMap((original, index) => {
+    const demos = (authoredOnly ? [] : this.demo.decks).flatMap((original, index) => {
       const deck = this.defaultDeck(userId, original.id);
       return deck ? [{key: `demo:${String(index).padStart(8, '0')}:${original.id}`, deck: deckMetadata(deck)}] : [];
     }).filter(entry => entry.key > after);
     const lastImported = after.startsWith('import:') ? after.slice(7) : '';
-    const imported = (this.db.prepare(`SELECT d.id, COALESCE(o.title,d.title) AS title, d.term_lang, d.meaning_lang, d.term_dir, d.meaning_dir, d.revision,
+    const imported = (this.db.prepare(`SELECT d.id, COALESCE(o.title,d.title) AS title, d.term_lang, d.meaning_lang, d.term_dir, d.meaning_dir, d.revision, json_extract(d.source_json,'$.kind') AS kind,
       (SELECT COUNT(*) FROM imported_words w LEFT JOIN word_overrides wo ON wo.word_id = w.id WHERE w.deck_id = d.id AND wo.deleted_at IS NULL) AS word_count
-      FROM imported_decks d LEFT JOIN deck_overrides o ON o.deck_id = d.id WHERE d.owner_id = ? AND d.id > ? AND o.deleted_at IS NULL ORDER BY d.id LIMIT 51`).all(userId, lastImported) as unknown as ImportedDeck[])
+      FROM imported_decks d LEFT JOIN deck_overrides o ON o.deck_id = d.id WHERE d.owner_id = ? AND d.id > ? AND o.deleted_at IS NULL
+      ${authoredOnly ? "AND json_extract(d.source_json,'$.kind') = 'authored'" : ''} ORDER BY d.id LIMIT 51`).all(userId, lastImported) as unknown as ImportedDeck[])
       .map(row => ({key: `import:${row.id}`, deck: metadata(row)}));
     const candidates = [...demos, ...imported].sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
     const decks: DeckMetadata[] = [];
@@ -91,7 +93,7 @@ export class ContentRepository {
   }
 
   metadata(userId: string, id: string): DeckMetadata {
-    const row = this.db.prepare(`SELECT d.id, COALESCE(o.title,d.title) AS title, d.term_lang, d.meaning_lang, d.term_dir, d.meaning_dir, d.revision,
+    const row = this.db.prepare(`SELECT d.id, COALESCE(o.title,d.title) AS title, d.term_lang, d.meaning_lang, d.term_dir, d.meaning_dir, d.revision, json_extract(d.source_json,'$.kind') AS kind,
       (SELECT COUNT(*) FROM imported_words w LEFT JOIN word_overrides wo ON wo.word_id = w.id WHERE w.deck_id = d.id AND wo.deleted_at IS NULL) AS word_count
       FROM imported_decks d LEFT JOIN deck_overrides o ON o.deck_id = d.id WHERE d.id = ? AND d.owner_id = ? AND o.deleted_at IS NULL`).get(id, userId) as unknown as ImportedDeck | undefined;
     if (row) return metadata(row);
@@ -101,7 +103,7 @@ export class ContentRepository {
   }
 
   deck(userId: string, id: string): Deck {
-    const row = this.db.prepare(`SELECT d.id, COALESCE(o.title,d.title) AS title, d.term_lang, d.meaning_lang, d.term_dir, d.meaning_dir, d.revision
+    const row = this.db.prepare(`SELECT d.id, COALESCE(o.title,d.title) AS title, d.term_lang, d.meaning_lang, d.term_dir, d.meaning_dir, d.revision, json_extract(d.source_json,'$.kind') AS kind
       FROM imported_decks d LEFT JOIN deck_overrides o ON o.deck_id = d.id WHERE d.id = ? AND d.owner_id = ? AND o.deleted_at IS NULL`).get(id, userId) as unknown as ImportedDeck | undefined;
     let deck: Deck;
     if (row) {
@@ -128,7 +130,7 @@ export class ContentRepository {
 
   source(userId: string, id: string): unknown {
     const row = this.db.prepare(`SELECT d.source_json FROM imported_decks d LEFT JOIN deck_overrides o ON o.deck_id = d.id
-      WHERE d.id = ? AND d.owner_id = ? AND o.deleted_at IS NULL`).get(id, userId) as {source_json: string} | undefined;
+      WHERE d.id = ? AND d.owner_id = ? AND o.deleted_at IS NULL AND COALESCE(json_extract(d.source_json,'$.kind'),'') <> 'authored'`).get(id, userId) as {source_json: string} | undefined;
     return row ? JSON.parse(row.source_json) : null;
   }
 }

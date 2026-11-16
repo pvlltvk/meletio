@@ -1,6 +1,7 @@
 import {createHash, randomBytes, randomUUID, scrypt, timingSafeEqual} from 'node:crypto';
 import type {DatabaseSync} from 'node:sqlite';
 import {AuthLimits} from './auth-limits';
+import {tokenName, type AccessTokens} from './access-tokens';
 import {transaction} from './database';
 import {ApiError, fields, invalid, stringField, type User} from './types';
 
@@ -93,9 +94,35 @@ export class Auth {
         .run(`${nextSalt}:${nextKey.toString('hex')}`, user.id, row.password_hash);
       if (changed.changes !== 1) throw new ApiError(409, 'credentials_changed', 'Your password changed in another session. Try again.');
       this.db.prepare('DELETE FROM auth_sessions WHERE user_id = ? AND token_hash <> ?').run(user.id, hashToken(this.token(cookie)!));
+      this.db.prepare('DELETE FROM access_tokens WHERE owner_id = ?').run(user.id);
     });
     this.limits.success(user.email);
     return {changed: true};
+  }
+
+  async createAccessToken(body: Record<string, unknown>, cookie: string | undefined, address: string, tokens: AccessTokens) {
+    this.limits.admit(address);
+    fields(body, ['name', 'currentPassword']);
+    const currentPassword = stringField(body.currentPassword, 'current password');
+    if (currentPassword.length < 12) invalid('Use at least 12 characters for your password.');
+    const name = tokenName(body.name);
+    const user = this.user(cookie);
+    this.limits.check(user.email, address);
+    const row = this.db.prepare('SELECT password_hash FROM users WHERE id = ?').get(user.id) as {password_hash: string};
+    const [salt, saved] = row.password_hash.split(':');
+    const key = await this.derive(currentPassword, salt);
+    if (!timingSafeEqual(key, Buffer.from(saved, 'hex'))) {
+      this.limits.failure(user.email, address);
+      throw new ApiError(403, 'invalid_current_password', 'Current password is incorrect.');
+    }
+    const result = tokens.create(user.id, {name}, () => {
+      const active = this.user(cookie);
+      if (active.id !== user.id) throw new ApiError(401, 'account_changed', 'Your account changed. Log in again.');
+      const current = this.db.prepare('SELECT password_hash FROM users WHERE id = ?').get(user.id) as {password_hash: string} | undefined;
+      if (current?.password_hash !== row.password_hash) throw new ApiError(409, 'credentials_changed', 'Your password changed in another session. Try again.');
+    });
+    this.limits.success(user.email);
+    return result;
   }
 
   token(cookie?: string): string | undefined {

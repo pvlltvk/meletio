@@ -8,7 +8,7 @@ export function openDatabase(path: string): DatabaseSync {
   try {
     db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
     const version = db.prepare('PRAGMA user_version').get() as {user_version: number};
-    if (version.user_version > 5) throw new Error('Unsupported database schema version.');
+    if (version.user_version > 7) throw new Error('Unsupported database schema version.');
     db.exec('PRAGMA journal_mode = WAL;');
     if (version.user_version === 0) {
       db.exec(`BEGIN IMMEDIATE;
@@ -62,6 +62,23 @@ export function openDatabase(path: string): DatabaseSync {
         db.exec(`
           CREATE TABLE word_reviews (owner_id TEXT NOT NULL REFERENCES users(id), deck_id TEXT NOT NULL, word_id TEXT NOT NULL, fingerprint TEXT NOT NULL, step INTEGER NOT NULL CHECK(step BETWEEN 0 AND 5), due_at INTEGER NOT NULL, answered_at INTEGER NOT NULL, PRIMARY KEY(owner_id,deck_id,word_id));
           PRAGMA user_version = 5;
+        `);
+      });
+    }
+    if (version.user_version < 6) {
+      transaction(db, () => {
+        db.exec(`
+          CREATE TABLE access_tokens (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id), token_hash TEXT NOT NULL UNIQUE, name TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+          CREATE INDEX access_tokens_owner ON access_tokens(owner_id, expires_at);
+          PRAGMA user_version = 6;
+        `);
+      });
+    }
+    if (version.user_version < 7) {
+      transaction(db, () => {
+        db.exec(`
+          CREATE INDEX imported_media_owner_size ON imported_media(owner_id, size);
+          PRAGMA user_version = 7;
         `);
       });
     }

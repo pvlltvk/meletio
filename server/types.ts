@@ -67,6 +67,13 @@ export function fields(body: Record<string, unknown>, allowed: string[]) {
   if (Object.keys(body).some(key => !allowed.includes(key))) invalid('Unexpected request field.');
 }
 
+export function languageField(value: unknown) {
+  const tag = stringField(value, 'language', 64);
+  if (!/^[A-Za-z]{2,8}(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|[0-9]{3}))?(?:-(?:[A-Za-z0-9]{5,8}|[0-9][A-Za-z0-9]{3}))*$/.test(tag)) invalid('Use a valid language tag.');
+  try { Intl.getCanonicalLocales(tag); } catch { invalid('Use a valid language tag.'); }
+  return tag;
+}
+
 export interface DeckMetadata {
   id: string;
   title: string;
@@ -78,6 +85,7 @@ export interface DeckMetadata {
   revision: number;
   imported: boolean;
   editable: boolean;
+  authored?: boolean;
 }
 
 export interface TrainingAnswer {
