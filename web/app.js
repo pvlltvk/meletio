@@ -413,7 +413,7 @@ function updateControls() {
   app.querySelectorAll('button, input, select').forEach(control => {
     control.disabled = Boolean(busy || failedOperation || importBusy || authoringEditor?.busy) && !(importBusy && control.id === 'import-file') && !control.hasAttribute('data-retry') && !control.hasAttribute('data-reload') && !(importBusy && (control.hasAttribute('data-import-cancel') || control.hasAttribute('data-import-recover'))) && !(authoringEditor?.busy && (control.hasAttribute('data-authoring-cancel') || control.hasAttribute('data-authoring-discard') || control.hasAttribute('data-authoring-keep') || control.hasAttribute('data-logout')));
   });
-  if (authoringEditor?.operation) app.querySelectorAll('#create-set-form input,#create-set-form select,#create-set-form button[type="submit"]').forEach(control => { control.disabled = true; });
+  if (authoringEditor?.operation) app.querySelectorAll('.authoring-card input,.authoring-card select,.authoring-card button[type="submit"]').forEach(control => { control.disabled = true; });
   if (passwordPending) app.querySelectorAll('#password-form button,#password-form input').forEach(control => { control.disabled = true; });
   if (tokenPending) app.querySelectorAll('#token-controls button,#token-controls input').forEach(control => { control.disabled = true; });
 }
@@ -774,10 +774,19 @@ function openSetEditor() {
   stopAudio();
   clearPasswordForm();
   clearTokenControls();
-  authoringEditor = {draft: {title: '', termLang: deck?.termLang || '', meaningLang: deck?.meaningLang || data.uiLanguage,
+  authoringEditor = {kind: 'set', draft: {title: '', termLang: deck?.termLang || '', meaningLang: deck?.meaningLang || data.uiLanguage,
     termDir: deck?.termDir || 'ltr', meaningDir: deck?.meaningDir || 'ltr'}, operation: null, busy: false, error: '', discard: null};
   render();
   app.querySelector('#create-set-form [name=title]')?.focus();
+}
+
+function openWordEditor() {
+  if (!user || !deckLoaded || !deck?.authored) return;
+  stopAudio();
+  authoringEditor = {kind: 'word', deckId: deck.id, revision: deck.revision,
+    draft: {term: '', meaning: ''}, operation: null, busy: false, error: '', discard: null};
+  render();
+  app.querySelector('#add-word-form [name=term]')?.focus();
 }
 
 function closeAuthoringEditor(nextScreen = screen) {
@@ -793,45 +802,67 @@ function closeAuthoringEditor(nextScreen = screen) {
   focusHeading();
 }
 
-function readSetDraft(form) {
+function readAuthoringDraft(form) {
   if (!authoringEditor || authoringEditor.operation) return;
-  for (const name of ['title', 'termLang', 'meaningLang', 'termDir', 'meaningDir']) authoringEditor.draft[name] = form.elements[name].value;
+  const names = authoringEditor.kind === 'word' ? ['term', 'meaning'] : ['title', 'termLang', 'meaningLang', 'termDir', 'meaningDir'];
+  for (const name of names) authoringEditor.draft[name] = form.elements[name].value;
 }
 
 function authoringView() {
   const state = authoringEditor;
   const draft = state.draft;
+  const addingWord = state.kind === 'word';
   const direction = (name, title) => `<label>${title}<select name="${name}"><option value="ltr" ${draft[name] === 'ltr' ? 'selected' : ''}>Left to right</option><option value="rtl" ${draft[name] === 'rtl' ? 'selected' : ''}>Right to left</option></select></label>`;
-  const confirmation = state.discard ? '<section class="confirmation" role="alert"><p>This save may already have completed. Check your learning sets before creating it again. Leave the editor?</p><div class="content-actions"><button type="button" class="primary" data-authoring-discard="true">Leave editor</button><button type="button" class="secondary" data-authoring-keep="true">Keep editing</button></div></section>' : '';
-  app.innerHTML = chrome(`<section class="intro"><h1>Create learning set</h1><p>Choose the languages before adding your words. Languages and text directions are fixed after creation.</p></section><section class="settings-card authoring-card"><form id="create-set-form" class="content-form"><label>Set name<input name="title" maxlength="240" required value="${escapeHtml(draft.title)}"></label><div class="import-language-pair"><label>Word language code<input name="termLang" maxlength="64" required value="${escapeHtml(draft.termLang)}"></label><label>Translation language code<input name="meaningLang" maxlength="64" required value="${escapeHtml(draft.meaningLang)}"></label>${direction('termDir', 'Word direction')}${direction('meaningDir', 'Translation direction')}</div>${state.error ? `<p class="account-error" role="alert">${escapeHtml(state.error)}</p>` : ''}${state.busy ? '<p role="status">Saving learning set…</p>' : ''}<div class="content-actions">${state.operation ? state.error && !state.busy ? '<button type="button" class="primary" data-authoring-retry="true">Retry save</button>' : '' : '<button class="primary" type="submit">Create learning set</button>'}<button class="secondary" type="button" data-authoring-cancel="true">Cancel</button></div></form>${confirmation}</section>`, screen === 'settings' ? 'settings' : 'vocabulary');
+  const fields = addingWord
+    ? `<label>Word<input name="term" maxlength="4000" required lang="${escapeHtml(deck.termLang)}" dir="${safeDirection(deck.termDir)}" value="${escapeHtml(draft.term)}"></label><label>Translation<input name="meaning" maxlength="4000" required lang="${escapeHtml(deck.meaningLang)}" dir="${safeDirection(deck.meaningDir)}" value="${escapeHtml(draft.meaning)}"></label>`
+    : `<label>Set name<input name="title" maxlength="240" required value="${escapeHtml(draft.title)}"></label><div class="import-language-pair"><label>Word language code<input name="termLang" maxlength="64" required value="${escapeHtml(draft.termLang)}"></label><label>Translation language code<input name="meaningLang" maxlength="64" required value="${escapeHtml(draft.meaningLang)}"></label>${direction('termDir', 'Word direction')}${direction('meaningDir', 'Translation direction')}</div>`;
+  const confirmation = state.discard ? '<section class="confirmation" role="alert"><p>This save may already have completed. Check your learning set before adding it again. Leave the editor?</p><div class="content-actions"><button type="button" class="primary" data-authoring-discard="true">Leave editor</button><button type="button" class="secondary" data-authoring-keep="true">Keep editing</button></div></section>' : '';
+  app.innerHTML = chrome(`<section class="intro"><h1>${addingWord ? 'Add word' : 'Create learning set'}</h1><p>${addingWord ? escapeHtml(deck.title) : 'Choose the languages before adding your words. Languages and text directions are fixed after creation.'}</p></section><section class="settings-card authoring-card"><form id="${addingWord ? 'add-word-form' : 'create-set-form'}" class="content-form">${fields}${state.error ? `<p class="account-error" role="alert">${escapeHtml(state.error)}</p>` : ''}${state.busy ? '<p role="status">Saving…</p>' : ''}<div class="content-actions">${state.operation ? state.error && !state.busy ? '<button type="button" class="primary" data-authoring-retry="true">Retry save</button>' : '' : `<button class="primary" type="submit">${addingWord ? 'Save word' : 'Create learning set'}</button>`}<button class="secondary" type="button" data-authoring-cancel="true">Cancel</button></div></form>${confirmation}</section>`, screen === 'settings' ? 'settings' : 'vocabulary');
 }
 
-async function saveAuthoredSet(form) {
+async function refreshAuthoringRevision(state, active) {
+  const content = await request(`/api/decks/${encodeURIComponent(state.deckId)}`);
+  if (!active()) return;
+  deck = content.deck;
+  const summary = decks.find(item => item.id === deck.id);
+  if (summary) Object.assign(summary, {title: deck.title, revision: deck.revision, wordCount: deck.words.length});
+  state.revision = deck.revision;
+  state.operation = null;
+  state.error = 'This set changed in another tab. Your draft is kept. Review it and save again.';
+}
+
+async function saveAuthoredContent(form) {
   const state = authoringEditor;
   if (!state || state.busy || !user || busy || importBusy || failedOperation) return;
-  if (form) readSetDraft(form);
+  if (form) readAuthoringDraft(form);
   const current = generation;
   const ownerId = user.id;
-  const active = () => authoringEditor === state && current === generation && user?.id === ownerId;
-  state.operation ??= {body: {...state.draft, requestId: operationId()}, result: null};
+  const active = () => authoringEditor === state && current === generation && user?.id === ownerId && (state.kind !== 'word' || deck?.id === state.deckId);
+  state.operation ??= {path: state.kind === 'word' ? `/api/authoring/decks/${encodeURIComponent(state.deckId)}/words` : '/api/authoring/decks',
+    body: state.kind === 'word' ? {revision: state.revision, words: [{...state.draft}], requestId: operationId()} : {...state.draft, requestId: operationId()}, result: null};
   const operation = state.operation;
   state.busy = true;
   state.error = '';
   render();
   try {
+    if (operation.conflict) {
+      await refreshAuthoringRevision(state, active);
+      return;
+    }
     if (!operation.result) {
-      const result = await request('/api/authoring/decks', operation.body);
+      const result = await request(operation.path, operation.body);
       if (!active()) return;
-      if (!result.deck?.id) throw new Error('The save result could not be confirmed.');
+      if (state.kind === 'word' ? result.deckId !== state.deckId || !result.words?.length : !result.deck?.id) throw new Error('The save result could not be confirmed.');
       operation.result = result;
     }
     const catalog = await request('/api/decks');
     if (!active()) return;
-    const content = await request(`/api/decks/${encodeURIComponent(operation.result.deck.id)}`);
+    const content = await request(`/api/decks/${encodeURIComponent(state.kind === 'word' ? state.deckId : operation.result.deck.id)}`);
     if (!active()) return;
     const training = await request(`/api/training?deckId=${encodeURIComponent(content.deck.id)}&format=compact`);
     if (!active()) return;
-    clearPractice();
+    if (state.kind === 'set') clearPractice();
+    else searchQuery = '';
     decks.splice(0, decks.length, ...catalog.decks);
     catalogCursor = catalog.nextCursor;
     catalogLoaded = true;
@@ -845,18 +876,26 @@ async function saveAuthoredSet(form) {
     screen = 'vocabulary';
     render();
     focusHeading();
-    announce('Learning set created.');
+    announce(state.kind === 'word' ? 'Word saved.' : 'Learning set created.');
   } catch (error) {
     if (!active()) return;
     if (error.status === 401) { clearAccount(); authError = 'Your session ended. Log in to continue.'; }
-    else if (operation.result) state.error = 'Your learning set was saved, but could not be loaded. Retry to load it.';
-    else if (!error.status || error.status >= 500) state.error = 'The save could not be confirmed. Retry this save to check it without creating another learning set.';
+    else if (operation.result) state.error = 'Your changes were saved, but could not be loaded. Retry to load them.';
+    else if (state.kind === 'word' && error.code === 'stale_content') {
+      operation.conflict = true;
+      state.error = 'This set changed, but could not be reloaded. Your draft is kept. Retry to reload it.';
+      try { await refreshAuthoringRevision(state, active); }
+      catch (refreshError) {
+        if (active() && refreshError.status === 401) { clearAccount(); authError = 'Your session ended. Log in to continue.'; }
+      }
+    } else if (operation.conflict) state.error = 'This set changed, but could not be reloaded. Your draft is kept. Retry to reload it.';
+    else if (!error.status || error.status >= 500) state.error = 'The save could not be confirmed. Retry this save to check it without adding it again.';
     else { state.error = error.message; state.operation = null; }
   } finally {
     if (active()) {
       state.busy = false;
       render();
-      app.querySelector(state.operation ? '[data-authoring-retry]' : '#create-set-form input')?.focus();
+      app.querySelector(state.operation ? '[data-authoring-retry]' : '.authoring-card input')?.focus();
     } else if (!user) render();
   }
 }
@@ -876,7 +915,7 @@ function clearSearchAnnouncement() {
 
 function updateWordList({announceCount = false} = {}) {
   const matches = filterWords(searchQuery);
-  document.querySelector('#word-grid').innerHTML = matches.length ? matches.map(wordCard).join('') : terms().length ? '<p class="empty">No words found. Try another search.</p>' : '<p class="empty">This set has no words. Import an Anki export to add vocabulary.</p>';
+  document.querySelector('#word-grid').innerHTML = matches.length ? matches.map(wordCard).join('') : terms().length ? '<p class="empty">No words found. Try another search.</p>' : deck.authored ? '<p class="empty">This set has no words yet. Add a word to begin.</p>' : '<p class="empty">This set has no words. Import an Anki export to add vocabulary.</p>';
   clearTimeout(searchTimer);
   if (announceCount) {
     searchTimer = setTimeout(() => announce(matches.length ? `${matches.length} words found.` : 'No words found.'), 350);
@@ -885,7 +924,7 @@ function updateWordList({announceCount = false} = {}) {
 
 function vocabulary() {
   if (!deck) { emptyLearningSets('vocabulary'); return; }
-  app.innerHTML = chrome(`<section class="intro"><h1>Vocabulary</h1><p>${terms().length} words in ${escapeHtml(deck.title)}.</p></section><label class="eyebrow" for="search">Search ${escapeHtml(langName(deck.termLang))} or ${escapeHtml(langName(deck.meaningLang))}</label><input id="search" class="search" type="search" placeholder="Find a word…" autocomplete="off" value="${escapeHtml(searchQuery)}"><div id="word-grid" class="vocabulary-grid"></div>`, 'vocabulary');
+  app.innerHTML = chrome(`<section class="intro"><h1>Vocabulary</h1><p>${terms().length} words in ${escapeHtml(deck.title)}.</p>${serverBacked && deck.authored ? '<button class="secondary" data-add-word="true">Add word</button>' : ''}</section><label class="eyebrow" for="search">Search ${escapeHtml(langName(deck.termLang))} or ${escapeHtml(langName(deck.meaningLang))}</label><input id="search" class="search" type="search" placeholder="Find a word…" autocomplete="off" value="${escapeHtml(searchQuery)}"><div id="word-grid" class="vocabulary-grid"></div>`, 'vocabulary');
   updateWordList();
 }
 
@@ -1348,7 +1387,7 @@ function render() {
 
 let selectedWord;
 app.addEventListener('input', event => {
-  if (event.target.closest('#create-set-form')) { readSetDraft(event.target.form); return; }
+  if (event.target.closest('#create-set-form,#add-word-form')) { readAuthoringDraft(event.target.form); return; }
   if (event.target.closest('#word-edit-form') && editDraft) { editDraft = {term: app.querySelector('[name=term]').value, meaning: app.querySelector('[name=meaning]').value}; }
   if (event.target.closest('#deck-rename-form')) renameDraft = event.target.value;
   if (serverBacked && event.target.closest('#import-mapping')) { readImportDraft(); invalidateImportPreview(); }
@@ -1359,7 +1398,7 @@ app.addEventListener('input', event => {
 });
 
 app.addEventListener('change', event => {
-  if (event.target.closest('#create-set-form')) { readSetDraft(event.target.form); return; }
+  if (event.target.closest('#create-set-form,#add-word-form')) { readAuthoringDraft(event.target.form); return; }
   if (serverBacked && event.target.id === 'import-file' && !busy && !failedOperation) { chooseImportFile(event.target.files[0]); return; }
   if (serverBacked && (busy || failedOperation || importBusy)) return;
   if (serverBacked && event.target.id === 'import-accept-skipped') { importCommit = null; return; }
@@ -1447,8 +1486,9 @@ app.addEventListener('click', event => {
       return;
     }
     if (failedOperation) return;
-    if (button.dataset.authoringRetry) { saveAuthoredSet(); return; }
+    if (button.dataset.authoringRetry) { saveAuthoredContent(); return; }
     if (button.dataset.createSet) { openSetEditor(); return; }
+    if (button.dataset.addWord) { openWordEditor(); return; }
     if (authoringEditor && button.dataset.screen) { closeAuthoringEditor(button.dataset.screen); return; }
     if (button.dataset.tokensOpen && user) { manageTokens('list'); return; }
     if (button.dataset.tokensClose) { clearTokenControls(); render(); return; }
@@ -1604,7 +1644,7 @@ app.addEventListener('click', event => {
 });
 
 app.addEventListener('submit', async event => {
-  if (event.target.id === 'create-set-form') { event.preventDefault(); saveAuthoredSet(event.target); return; }
+  if (['create-set-form', 'add-word-form'].includes(event.target.id)) { event.preventDefault(); saveAuthoredContent(event.target); return; }
   if (event.target.id === 'token-form') { event.preventDefault(); manageTokens('create', event.target); return; }
   if (event.target.id === 'password-form') { event.preventDefault(); savePassword(event.target); return; }
   if (event.target.id === 'word-edit-form') { event.preventDefault(); mutateContent('word-edit', editDraft); return; }
