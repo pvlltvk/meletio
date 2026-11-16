@@ -74,6 +74,7 @@ let editDraft = null;
 let renameDraft = null;
 let contentError = '';
 let contentPending = null;
+let authoringEditor = null;
 let deleteConfirmation = null;
 let repairDestination = null;
 let importedDeckId = null;
@@ -131,6 +132,7 @@ function clearPractice() {
 
 function clearAccount() {
   generation++;
+  authoringEditor = null;
   clearPasswordForm();
   clearTokenControls();
   stopAudio();
@@ -409,8 +411,9 @@ function updateControls() {
     app.prepend(panel);
   }
   app.querySelectorAll('button, input, select').forEach(control => {
-    control.disabled = Boolean(busy || failedOperation || importBusy) && !(importBusy && control.id === 'import-file') && !control.hasAttribute('data-retry') && !control.hasAttribute('data-reload') && !(importBusy && (control.hasAttribute('data-import-cancel') || control.hasAttribute('data-import-recover')));
+    control.disabled = Boolean(busy || failedOperation || importBusy || authoringEditor?.busy) && !(importBusy && control.id === 'import-file') && !control.hasAttribute('data-retry') && !control.hasAttribute('data-reload') && !(importBusy && (control.hasAttribute('data-import-cancel') || control.hasAttribute('data-import-recover'))) && !(authoringEditor?.busy && (control.hasAttribute('data-authoring-cancel') || control.hasAttribute('data-authoring-discard') || control.hasAttribute('data-authoring-keep') || control.hasAttribute('data-logout')));
   });
+  if (authoringEditor?.operation) app.querySelectorAll('#create-set-form input,#create-set-form select,#create-set-form button[type="submit"]').forEach(control => { control.disabled = true; });
   if (passwordPending) app.querySelectorAll('#password-form button,#password-form input').forEach(control => { control.disabled = true; });
   if (tokenPending) app.querySelectorAll('#token-controls button,#token-controls input').forEach(control => { control.disabled = true; });
 }
@@ -433,6 +436,7 @@ function rememberLearningSet(id) {
 }
 
 async function loadPractice(nextScreen = 'study') {
+  authoringEditor = null;
   clearPasswordForm();
   clearTokenControls();
   stopAudio();
@@ -762,7 +766,99 @@ function study() {
 }
 
 function emptyLearningSets(active) {
-  app.innerHTML = chrome(`<section class="intro"><h1>${active === 'vocabulary' ? 'Vocabulary' : 'Study'}</h1></section><section class="hero"><div class="hero-copy"><h2>No learning sets yet</h2><p>Import an Anki file to add your vocabulary.</p><button class="primary" data-screen="settings">Import vocabulary ${icon('arrow')}</button></div></section>`, active);
+  app.innerHTML = chrome(`<section class="intro"><h1>${active === 'vocabulary' ? 'Vocabulary' : 'Study'}</h1></section><section class="hero"><div class="hero-copy"><h2>No learning sets yet</h2><p>${serverBacked ? 'Create a learning set or import an Anki file to add your vocabulary.' : 'Import an Anki file to add your vocabulary.'}</p>${serverBacked ? '<button class="primary" data-create-set="true">Create learning set</button>' : ''}<button class="${serverBacked ? 'text-button' : 'primary'}" data-screen="settings">Import vocabulary ${icon('arrow')}</button></div></section>`, active);
+}
+
+function openSetEditor() {
+  if (!user || !deckLoaded) return;
+  stopAudio();
+  clearPasswordForm();
+  clearTokenControls();
+  authoringEditor = {draft: {title: '', termLang: deck?.termLang || '', meaningLang: deck?.meaningLang || data.uiLanguage,
+    termDir: deck?.termDir || 'ltr', meaningDir: deck?.meaningDir || 'ltr'}, operation: null, busy: false, error: '', discard: null};
+  render();
+  app.querySelector('#create-set-form [name=title]')?.focus();
+}
+
+function closeAuthoringEditor(nextScreen = screen) {
+  if (authoringEditor?.operation) {
+    authoringEditor.discard = nextScreen;
+    render();
+    app.querySelector('[data-authoring-discard]')?.focus();
+    return;
+  }
+  authoringEditor = null;
+  screen = nextScreen;
+  render();
+  focusHeading();
+}
+
+function readSetDraft(form) {
+  if (!authoringEditor || authoringEditor.operation) return;
+  for (const name of ['title', 'termLang', 'meaningLang', 'termDir', 'meaningDir']) authoringEditor.draft[name] = form.elements[name].value;
+}
+
+function authoringView() {
+  const state = authoringEditor;
+  const draft = state.draft;
+  const direction = (name, title) => `<label>${title}<select name="${name}"><option value="ltr" ${draft[name] === 'ltr' ? 'selected' : ''}>Left to right</option><option value="rtl" ${draft[name] === 'rtl' ? 'selected' : ''}>Right to left</option></select></label>`;
+  const confirmation = state.discard ? '<section class="confirmation" role="alert"><p>This save may already have completed. Check your learning sets before creating it again. Leave the editor?</p><div class="content-actions"><button type="button" class="primary" data-authoring-discard="true">Leave editor</button><button type="button" class="secondary" data-authoring-keep="true">Keep editing</button></div></section>' : '';
+  app.innerHTML = chrome(`<section class="intro"><h1>Create learning set</h1><p>Choose the languages before adding your words. Languages and text directions are fixed after creation.</p></section><section class="settings-card authoring-card"><form id="create-set-form" class="content-form"><label>Set name<input name="title" maxlength="240" required value="${escapeHtml(draft.title)}"></label><div class="import-language-pair"><label>Word language code<input name="termLang" maxlength="64" required value="${escapeHtml(draft.termLang)}"></label><label>Translation language code<input name="meaningLang" maxlength="64" required value="${escapeHtml(draft.meaningLang)}"></label>${direction('termDir', 'Word direction')}${direction('meaningDir', 'Translation direction')}</div>${state.error ? `<p class="account-error" role="alert">${escapeHtml(state.error)}</p>` : ''}${state.busy ? '<p role="status">Saving learning set…</p>' : ''}<div class="content-actions">${state.operation ? state.error && !state.busy ? '<button type="button" class="primary" data-authoring-retry="true">Retry save</button>' : '' : '<button class="primary" type="submit">Create learning set</button>'}<button class="secondary" type="button" data-authoring-cancel="true">Cancel</button></div></form>${confirmation}</section>`, screen === 'settings' ? 'settings' : 'vocabulary');
+}
+
+async function saveAuthoredSet(form) {
+  const state = authoringEditor;
+  if (!state || state.busy || !user || busy || importBusy || failedOperation) return;
+  if (form) readSetDraft(form);
+  const current = generation;
+  const ownerId = user.id;
+  const active = () => authoringEditor === state && current === generation && user?.id === ownerId;
+  state.operation ??= {body: {...state.draft, requestId: operationId()}, result: null};
+  const operation = state.operation;
+  state.busy = true;
+  state.error = '';
+  render();
+  try {
+    if (!operation.result) {
+      const result = await request('/api/authoring/decks', operation.body);
+      if (!active()) return;
+      if (!result.deck?.id) throw new Error('The save result could not be confirmed.');
+      operation.result = result;
+    }
+    const catalog = await request('/api/decks');
+    if (!active()) return;
+    const content = await request(`/api/decks/${encodeURIComponent(operation.result.deck.id)}`);
+    if (!active()) return;
+    const training = await request(`/api/training?deckId=${encodeURIComponent(content.deck.id)}&format=compact`);
+    if (!active()) return;
+    clearPractice();
+    decks.splice(0, decks.length, ...catalog.decks);
+    catalogCursor = catalog.nextCursor;
+    catalogLoaded = true;
+    deck = content.deck;
+    if (!decks.some(item => item.id === deck.id)) decks.push({...deck, words: undefined, wordCount: deck.words.length});
+    review = training.review;
+    reviewLoadedAt = performance.now();
+    lastSession = training.latestResult;
+    rememberLearningSet(deck.id);
+    authoringEditor = null;
+    screen = 'vocabulary';
+    render();
+    focusHeading();
+    announce('Learning set created.');
+  } catch (error) {
+    if (!active()) return;
+    if (error.status === 401) { clearAccount(); authError = 'Your session ended. Log in to continue.'; }
+    else if (operation.result) state.error = 'Your learning set was saved, but could not be loaded. Retry to load it.';
+    else if (!error.status || error.status >= 500) state.error = 'The save could not be confirmed. Retry this save to check it without creating another learning set.';
+    else { state.error = error.message; state.operation = null; }
+  } finally {
+    if (active()) {
+      state.busy = false;
+      render();
+      app.querySelector(state.operation ? '[data-authoring-retry]' : '#create-set-form input')?.focus();
+    } else if (!user) render();
+  }
 }
 
 function filterWords(query) {
@@ -1223,7 +1319,7 @@ function importSettings() {
 
 function settings() {
   const management = serverBacked && deck?.editable ? `<section class="settings-card"><h2>Manage ${escapeHtml(deck.title)}</h2>${renameDraft !== null ? `<form id="deck-rename-form" class="content-form"><label>Set name<input name="title" maxlength="120" required value="${escapeHtml(renameDraft)}"></label>${contentFeedback()}<div class="content-actions"><button class="primary" type="submit">Save name</button><button class="secondary" type="button" data-rename-cancel="true">Cancel</button></div></form>` : `<div class="content-actions"><button class="secondary" data-rename-set="true">Rename set</button>${deck.imported ? '<button class="text-button" data-restore-media="true">Restore missing media</button>' : ''}<button class="text-button danger" data-delete-set="true">Delete set</button></div>${contentFeedback()}`}${deleteConfirmation === 'set' ? `<section class="confirmation" role="alert"><p>Delete “${escapeHtml(deck.title)}” from your learning sets? Your practice history${deck.imported ? ' and Anki export are' : ' is'} kept.</p><div class="content-actions"><button class="primary danger-fill" data-confirm-delete-set="true">Delete set</button><button class="secondary" data-keep="true">Keep set</button></div></section>` : ''}</section>` : '';
-  app.innerHTML = chrome(`<section class="intro"><h1>Settings</h1></section><div class="settings-stack"><section class="settings-card"><h2 id="learning-set-label">Learning set</h2>${!decks.length ? '<p>No learning sets yet. Import an Anki file below.</p>' : ''}<div class="deck-options" role="radiogroup" aria-labelledby="learning-set-label">${decks.map(option => `<label class="deck-option ${option.id === deck?.id ? 'selected' : ''}"><input type="radio" name="learning-set" value="${escapeHtml(option.id)}" ${option.id === deck?.id ? 'checked' : ''}><span><strong>${escapeHtml(option.title)}</strong><small>${escapeHtml(langName(option.termLang))} → ${escapeHtml(langName(option.meaningLang))}${!option.imported && !option.authored ? ' · Default' : ''}</small></span></label>`).join('')}</div>${serverBacked && catalogCursor ? '<button class="text-button" data-catalog-more="true">Load more learning sets</button>' : ''}</section>${management}${serverBacked ? accountSettings() + tokenSettings() : ''}<section class="settings-card"><h2>Pronunciation</h2><label class="switch-row" for="auto-pronounce"><span><strong>Play after I answer</strong></span><input id="auto-pronounce" type="checkbox" role="switch" ${autoPronounce ? 'checked' : ''}></label>${storageAvailable ? '' : '<p class="storage-note">This choice lasts for this visit.</p>'}</section>${serverBacked ? importSettings() : ''}${serverBacked ? '' : '<p class="settings-footnote">Practice resets when this preview reloads.</p>'}</div>`, 'settings');
+  app.innerHTML = chrome(`<section class="intro"><h1>Settings</h1></section><div class="settings-stack"><section class="settings-card"><h2 id="learning-set-label">Learning set</h2>${!decks.length ? '<p>No learning sets yet. Import an Anki file below.</p>' : ''}<div class="deck-options" role="radiogroup" aria-labelledby="learning-set-label">${decks.map(option => `<label class="deck-option ${option.id === deck?.id ? 'selected' : ''}"><input type="radio" name="learning-set" value="${escapeHtml(option.id)}" ${option.id === deck?.id ? 'checked' : ''}><span><strong>${escapeHtml(option.title)}</strong><small>${escapeHtml(langName(option.termLang))} → ${escapeHtml(langName(option.meaningLang))}${!option.imported && !option.authored ? ' · Default' : ''}</small></span></label>`).join('')}</div>${serverBacked && catalogCursor ? '<button class="text-button" data-catalog-more="true">Load more learning sets</button>' : ''}${serverBacked ? '<button class="secondary" data-create-set="true">Create learning set</button>' : ''}</section>${management}${serverBacked ? accountSettings() + tokenSettings() : ''}<section class="settings-card"><h2>Pronunciation</h2><label class="switch-row" for="auto-pronounce"><span><strong>Play after I answer</strong></span><input id="auto-pronounce" type="checkbox" role="switch" ${autoPronounce ? 'checked' : ''}></label>${storageAvailable ? '' : '<p class="storage-note">This choice lasts for this visit.</p>'}</section>${serverBacked ? importSettings() : ''}${serverBacked ? '' : '<p class="settings-footnote">Practice resets when this preview reloads.</p>'}</div>`, 'settings');
 }
 
 function render() {
@@ -1236,7 +1332,8 @@ function render() {
     return;
   }
   if (!deck && !['study', 'vocabulary', 'settings'].includes(screen)) screen = 'study';
-  if (screen === 'study') study();
+  if (authoringEditor) authoringView();
+  else if (screen === 'study') study();
   else if (screen === 'vocabulary') vocabulary();
   else if (screen === 'detail') detail(selectedWord);
   else if (screen === 'practice') practice();
@@ -1244,13 +1341,14 @@ function render() {
   else if (screen === 'settings') settings();
   updateControls();
   prepareVisibleAudio();
-  if (serverBacked && user && screen === 'study' && !busy && !failedOperation && !document.hidden && review && review.nextDue !== null && review.nextDue > review.asOf) {
-    reviewTimer = setTimeout(() => { if (!busy && !failedOperation && screen === 'study') refreshStudy(); }, Math.min(Math.max(1000, review.nextDue - review.asOf - (performance.now() - reviewLoadedAt)), 2147483647));
+  if (serverBacked && user && screen === 'study' && !authoringEditor && !busy && !failedOperation && !document.hidden && review && review.nextDue !== null && review.nextDue > review.asOf) {
+    reviewTimer = setTimeout(() => { if (!authoringEditor && !busy && !failedOperation && screen === 'study') refreshStudy(); }, Math.min(Math.max(1000, review.nextDue - review.asOf - (performance.now() - reviewLoadedAt)), 2147483647));
   }
 }
 
 let selectedWord;
 app.addEventListener('input', event => {
+  if (event.target.closest('#create-set-form')) { readSetDraft(event.target.form); return; }
   if (event.target.closest('#word-edit-form') && editDraft) { editDraft = {term: app.querySelector('[name=term]').value, meaning: app.querySelector('[name=meaning]').value}; }
   if (event.target.closest('#deck-rename-form')) renameDraft = event.target.value;
   if (serverBacked && event.target.closest('#import-mapping')) { readImportDraft(); invalidateImportPreview(); }
@@ -1261,6 +1359,7 @@ app.addEventListener('input', event => {
 });
 
 app.addEventListener('change', event => {
+  if (event.target.closest('#create-set-form')) { readSetDraft(event.target.form); return; }
   if (serverBacked && event.target.id === 'import-file' && !busy && !failedOperation) { chooseImportFile(event.target.files[0]); return; }
   if (serverBacked && (busy || failedOperation || importBusy)) return;
   if (serverBacked && event.target.id === 'import-accept-skipped') { importCommit = null; return; }
@@ -1286,6 +1385,7 @@ app.addEventListener('change', event => {
     return;
   }
   if (event.target.name === 'learning-set') {
+    authoringEditor = null;
     stopAudio();
     editDraft = null; renameDraft = null; deleteConfirmation = null; contentError = ''; contentPending = null;
     if (serverBacked) {
@@ -1323,6 +1423,17 @@ app.addEventListener('click', event => {
   const button = event.target.closest('button');
   if (!button) return;
   if (serverBacked) {
+    if (button.dataset.authoringCancel) { closeAuthoringEditor(); return; }
+    if (button.dataset.authoringDiscard) {
+      const nextScreen = authoringEditor?.discard || screen;
+      authoringEditor = null;
+      screen = nextScreen;
+      render();
+      focusHeading();
+      return;
+    }
+    if (button.dataset.authoringKeep) { if (authoringEditor) authoringEditor.discard = null; render(); return; }
+    if (authoringEditor?.busy && !button.dataset.logout) return;
     if (button.dataset.importCancel) { cancelImport(); return; }
     if (button.dataset.importRecover) { recoverImport(); return; }
     if (busy || importBusy) return;
@@ -1336,6 +1447,9 @@ app.addEventListener('click', event => {
       return;
     }
     if (failedOperation) return;
+    if (button.dataset.authoringRetry) { saveAuthoredSet(); return; }
+    if (button.dataset.createSet) { openSetEditor(); return; }
+    if (authoringEditor && button.dataset.screen) { closeAuthoringEditor(button.dataset.screen); return; }
     if (button.dataset.tokensOpen && user) { manageTokens('list'); return; }
     if (button.dataset.tokensClose) { clearTokenControls(); render(); return; }
     if (button.dataset.tokenDismiss) { createdToken = null; render(); return; }
@@ -1371,6 +1485,7 @@ app.addEventListener('click', event => {
       return;
     }
     if (button.dataset.logout) {
+      authoringEditor = null;
       clearPasswordForm();
       stopAudio();
       runOperation({path: '/api/auth/logout', body: {}, accept: () => clearAccount()});
@@ -1489,6 +1604,7 @@ app.addEventListener('click', event => {
 });
 
 app.addEventListener('submit', async event => {
+  if (event.target.id === 'create-set-form') { event.preventDefault(); saveAuthoredSet(event.target); return; }
   if (event.target.id === 'token-form') { event.preventDefault(); manageTokens('create', event.target); return; }
   if (event.target.id === 'password-form') { event.preventDefault(); savePassword(event.target); return; }
   if (event.target.id === 'word-edit-form') { event.preventDefault(); mutateContent('word-edit', editDraft); return; }
@@ -1531,9 +1647,10 @@ let noticeRevision = 0;
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { stopAudio(); clearTimeout(reviewTimer); }
-  else if (serverBacked && user && screen === 'study' && !busy && !failedOperation) refreshStudy();
+  else if (serverBacked && user && screen === 'study' && !authoringEditor && !busy && !failedOperation) refreshStudy();
 });
 window.addEventListener('pagehide', () => {
+  authoringEditor = null;
   clearTimeout(reviewTimer);
   stopAudio();
   clearPasswordForm();
@@ -1543,6 +1660,7 @@ window.addEventListener('pagehide', () => {
 });
 window.addEventListener('pageshow', event => {
   if (event.persisted) {
+    authoringEditor = null;
     clearPasswordForm();
     clearTokenControls();
     if (serverBacked && user && screen === 'study' && !busy && !failedOperation) refreshStudy();

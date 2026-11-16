@@ -49,7 +49,8 @@ async function main() {
       ['account-browser-check', {url: origin + '/', closedUrl: closedOrigin + '/'}],
       ['lesson-browser-check', {url: origin + '/'}],
       ['selection-browser-check', {url: origin + '/'}],
-      ['authoring-browser-check', {url: origin + '/'}]
+      ['authoring-browser-check', {url: origin + '/'}],
+      ['browser-authoring-check', {url: origin + '/'}]
     ];
     await mkdir(join(root, 'artifacts'), {recursive: true});
     runnerDirectory = await mkdtemp(join(root, 'artifacts/browser-'));
